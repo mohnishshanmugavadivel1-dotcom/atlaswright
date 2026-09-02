@@ -1,8 +1,10 @@
-// renderer.js — canvas setup, terrain/grid/landmarks/crosshair/player/minimap rendering
-import { WORLD, FR, GR, PPM, colorMap, fogMap, heightAt, landmarks, bearings, isAligned } from './world.js';
+// renderer.js ï¿½ canvas setup, terrain/grid/landmarks/crosshair/player/minimap rendering
+import { WORLD, FR, GR, PPM, colorMap, fogMap, fogVersion, heightAt, landmarks, bearings, isAligned } from './world.js';
 
 let canvas, ctx, cW, cH;
 let minimapCanvas, minimapCtx;
+let _minimapDirty = true, _lastMinimapPx = -1, _lastMinimapPz = -1;
+let _terrainCache = null, _terrainCacheKey = '';
 
 export function initCanvas() {
   canvas = document.getElementById('world-canvas');
@@ -37,18 +39,26 @@ export function render(state, beaconsList, lastFix, hasFix) {
   const sz = Math.max(0, Math.floor(state.pz - viewR));
   const ex = Math.min(WORLD, Math.ceil(state.px + viewR));
   const ez = Math.min(WORLD, Math.ceil(state.pz + viewR));
-  const imgData = ctx.createImageData(Math.ceil(ex - sx), Math.ceil(ez - sz));
-  for (let wz = sz; wz < ez; wz++) for (let wx = sx; wx < ex; wx++) {
-    const h = heightAt(wx, wz);
-    const pi = ((wz - sz) | 0) * ((ex - sx) | 0) + ((wx - sx) | 0);
-    if (h <= 0) {
-      imgData.data[pi * 4] = 40; imgData.data[pi * 4 + 1] = 85; imgData.data[pi * 4 + 2] = 130; imgData.data[pi * 4 + 3] = 255;
-    } else {
-      const ci = (wz * WORLD + wx) * 3;
-      const explored = fogMap[wz * WORLD + wx];
-      imgData.data[pi * 4] = colorMap[ci]; imgData.data[pi * 4 + 1] = colorMap[ci + 1]; imgData.data[pi * 4 + 2] = colorMap[ci + 2];
-      imgData.data[pi * 4 + 3] = explored ? 255 : 40;
+  const tw = Math.ceil(ex - sx), th = Math.ceil(ez - sz);
+  const cacheKey = sx + ',' + sz + ',' + tw + ',' + th + ':' + fogVersion;
+  let imgData;
+  if (_terrainCache && _terrainCacheKey === cacheKey) {
+    imgData = _terrainCache;
+  } else {
+    imgData = ctx.createImageData(tw, th);
+    for (let wz = sz; wz < ez; wz++) for (let wx = sx; wx < ex; wx++) {
+      const h = heightAt(wx, wz);
+      const pi = ((wz - sz) | 0) * tw + ((wx - sx) | 0);
+      if (h <= 0) {
+        imgData.data[pi * 4] = 40; imgData.data[pi * 4 + 1] = 85; imgData.data[pi * 4 + 2] = 130; imgData.data[pi * 4 + 3] = 255;
+      } else {
+        const ci = (wz * WORLD + wx) * 3;
+        const explored = fogMap[wz * WORLD + wx];
+        imgData.data[pi * 4] = colorMap[ci]; imgData.data[pi * 4 + 1] = colorMap[ci + 1]; imgData.data[pi * 4 + 2] = colorMap[ci + 2];
+        imgData.data[pi * 4 + 3] = explored ? 255 : 40;
+      }
     }
+    _terrainCache = imgData; _terrainCacheKey = cacheKey;
   }
   ctx.putImageData(imgData, Math.floor((sx - state.px) * PPM + cW / 2), Math.floor((sz - state.pz) * PPM + cH / 2));
   // Grid
@@ -78,7 +88,7 @@ export function render(state, beaconsList, lastFix, hasFix) {
     ctx.fillStyle = '#ff6600'; ctx.fillRect(s.x - 1, s.z - 14, 4, 6);
     ctx.fillStyle = '#fff'; ctx.font = '9px Georgia'; ctx.textAlign = 'center'; ctx.fillText(b.name, s.x, s.z - 18);
   });
-  // Crosshair — amber when aligned with a target
+  // Crosshair ï¿½ amber when aligned with a target
   const aligned = isAligned(state.px, state.pz, state.camAngle, bearings);
   ctx.strokeStyle = aligned ? 'rgba(255,180,0,0.9)' : 'rgba(255,255,255,0.7)';
   ctx.lineWidth = 2;
@@ -106,8 +116,10 @@ export function render(state, beaconsList, lastFix, hasFix) {
   const deg = Math.round((state.camAngle * 180 / Math.PI + 360) % 360);
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   document.getElementById('compass').textContent = String(deg).padStart(3, '0') + ' deg ' + dirs[Math.round(deg / 45) % 8];
-  // Minimap
-  renderMinimap(state);
+  // Minimap (rebuild only when player moves)
+  const mpx = Math.floor(state.px), mpz = Math.floor(state.pz);
+  if (mpx !== _lastMinimapPx || mpz !== _lastMinimapPz) { _minimapDirty = true; _lastMinimapPx = mpx; _lastMinimapPz = mpz; }
+  if (_minimapDirty) { renderMinimap(state); _minimapDirty = false; }
 }
 
 function renderMinimap(state) {

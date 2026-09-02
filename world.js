@@ -7,6 +7,7 @@ export const WORLD = 1024, SIG = 1337, PPM = 2.5, SR = 200, FR = 320, GR = 50, M
 export const heightMap = new Float32Array(WORLD * WORLD);
 export const colorMap = new Uint8Array(WORLD * WORLD * 3);
 export const fogMap = new Uint8Array(WORLD * WORLD);
+export let fogVersion = 0;
 
 export function heightAt(x, z) {
   if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) return -999;
@@ -46,7 +47,7 @@ export function revealFog(wx, wz, radius) {
   for (let z = cz - rr; z <= cz + rr; z++) for (let x = cx - rr; x <= cx + rr; x++) {
     if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) continue;
     const dx = x - cx, dz = z - cz;
-    if (dx * dx + dz * dz <= radius * radius) fogMap[z * WORLD + x] = 1;
+    if (dx * dx + dz * dz <= radius * radius) { if (!fogMap[z * WORLD + x]) { fogMap[z * WORLD + x] = 1; fogVersion++; } }
   }
 }
 
@@ -101,7 +102,7 @@ export function findNearestTarget(px, pz, camAngle, bearingsList) {
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d > FR) continue;
     const trueB = Math.atan2(dx, -dz);
-    const off = Math.abs(((camAngle - trueB + Math.PI) % (Math.PI * 2)) - Math.PI);
+    const off = angDiff(camAngle, trueB);
     const score = off * 1000 + d;
     if (score < bestScore) { bestScore = score; best = t; }
   }
@@ -109,23 +110,18 @@ export function findNearestTarget(px, pz, camAngle, bearingsList) {
 }
 
 export function isAligned(px, pz, camAngle, bearingsList) {
-  const recorded = new Set(bearingsList.map(b => b.name));
-  const all = [];
-  landmarks.forEach(l => { if (!recorded.has(l.name)) all.push(l); });
-  beacons.forEach(b => { if (!recorded.has(b.name)) all.push(b); });
-  for (const t of all) {
-    const dx = t.x - px, dz = t.z - pz;
-    if (Math.sqrt(dx * dx + dz * dz) > FR) continue;
-    const trueB = Math.atan2(dx, -dz);
-    const off = Math.abs(((camAngle - trueB + Math.PI) % (Math.PI * 2)) - Math.PI);
-    if (off <= ALG) return true;
-  }
-  return false;
+  const t = findNearestTarget(px, pz, camAngle, bearingsList);
+  if (!t) return false;
+  const dx = t.x - px, dz = t.z - pz;
+  const trueB = Math.atan2(dx, -dz);
+  return angDiff(camAngle, trueB) <= ALG;
 }
 
 function angDiff(a, b) {
   return Math.abs(((a - b + Math.PI) % (Math.PI * 2)) - Math.PI);
 }
+
+
 
 export function takeBearing(state) {
   const tx = findNearestTarget(state.px, state.pz, state.camAngle, bearings);

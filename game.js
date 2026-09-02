@@ -15,8 +15,7 @@ export const state = {
   setStatus
 };
 
-// Expose state setters for world.js callbacks
-state.setStatus = setStatus;
+let _exploredTimer = 0;
 
 function update(delta) {
   if (state.mode !== 0 || !state.started) return;
@@ -43,7 +42,8 @@ function update(delta) {
   state.px = Math.max(1, Math.min(WORLD - 2, state.px));
   state.pz = Math.max(1, Math.min(WORLD - 2, state.pz));
   revealFog(state.px, state.pz, SR);
-  state.exploredPct = calcExplored();
+  _exploredTimer += delta;
+  if (_exploredTimer >= 1) { _exploredTimer = 0; state.exploredPct = calcExplored(); }
 }
 
 function gameLoop(ts) {
