@@ -1,4 +1,4 @@
-// chart.js — chart overlay, freehand drawing, fix stamping, publish
+// chart.js ï¿½ chart overlay, freehand drawing, fix stamping, publish
 import { landmarks, calcExplored } from './world.js';
 
 export const chartState = { strokes: [], fixes: [], currentStroke: [], published: false };
@@ -51,6 +51,15 @@ export function drawChart() {
   ctx.fillStyle = '#ede8df';
   ctx.fillRect(0, 0, cw, ch);
   const ext = 260;
+  // Hint text when chart is empty
+  if (chartState.strokes.length === 0 && chartState.fixes.length === 0) {
+    ctx.fillStyle = 'rgba(90,74,48,0.25)';
+    ctx.font = 'italic 14px "Instrument Serif", Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Draw what you see from this vantage point', cw / 2, ch / 2 - 10);
+    ctx.font = '12px "Source Sans 3", sans-serif';
+    ctx.fillText('Use the ink to sketch terrain, landmarks, and bearings', cw / 2, ch / 2 + 14);
+  }
   // Grid
   ctx.strokeStyle = 'rgba(180,165,130,0.4)'; ctx.lineWidth = 0.5;
   for (let k = -5; k <= 5; k++) {

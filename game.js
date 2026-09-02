@@ -59,6 +59,9 @@ function startGame() {
   state.started = true;
   document.getElementById('start-overlay').classList.add('hidden');
   document.getElementById('world-canvas').requestPointerLock();
+  // Show first-launch hint, fade after 6s
+  const hint = document.getElementById('first-hint');
+  if (hint) { hint.classList.add('visible'); setTimeout(() => hint.classList.remove('visible'), 6000); }
 }
 
 window.addEventListener('DOMContentLoaded', () => {

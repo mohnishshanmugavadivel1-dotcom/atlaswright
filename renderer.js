@@ -1,5 +1,5 @@
 // renderer.js � canvas setup, terrain/grid/landmarks/crosshair/player/minimap rendering
-import { WORLD, FR, GR, PPM, colorMap, fogMap, fogVersion, heightAt, landmarks, bearings, isAligned } from './world.js';
+import { WORLD, FR, GR, PPM, colorMap, fogMap, fogVersion, heightAt, landmarks, bearings, isAligned, findNearestTarget } from './world.js';
 
 let canvas, ctx, cW, cH;
 let minimapCanvas, minimapCtx;
@@ -89,7 +89,8 @@ export function render(state, beaconsList, lastFix, hasFix) {
     ctx.fillStyle = '#fff'; ctx.font = '9px Georgia'; ctx.textAlign = 'center'; ctx.fillText(b.name, s.x, s.z - 18);
   });
   // Crosshair � amber when aligned with a target
-  const aligned = isAligned(state.px, state.pz, state.camAngle, bearings);
+  const target = findNearestTarget(state.px, state.pz, state.camAngle, bearings);
+  const aligned = target && isAligned(state.px, state.pz, state.camAngle, bearings);
   ctx.strokeStyle = aligned ? 'rgba(255,180,0,0.9)' : 'rgba(255,255,255,0.7)';
   ctx.lineWidth = 2;
   const cx = cW / 2, cy = cH / 2;
@@ -99,6 +100,16 @@ export function render(state, beaconsList, lastFix, hasFix) {
   ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 4);
   ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 12);
   ctx.stroke();
+  // Show target name when aligned
+  if (aligned && target) {
+    ctx.fillStyle = 'rgba(255,180,0,0.9)';
+    ctx.font = 'bold 13px "Source Sans 3", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(target.name, cx, cy + 28);
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255,180,0,0.7)';
+    ctx.fillText('press E', cx, cy + 42);
+  }
   // Player
   const ps = worldToScreen(state.px, state.pz, state.px, state.pz);
   ctx.fillStyle = '#e8d8b0'; ctx.beginPath(); ctx.arc(ps.x, ps.z, 6, 0, Math.PI * 2); ctx.fill();

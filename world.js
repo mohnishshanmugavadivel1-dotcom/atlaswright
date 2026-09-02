@@ -1,10 +1,10 @@
 // world.js � terrain, fog, landmarks, beacons, bearings, resection
 import { seedRng, initNoise, fbm, lerp } from './noise.js';
 
-export const WORLD = 1024, SIG = 1337, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
+export const WORLD = 1024, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
 
 // Terrain data
-export const heightMap = new Float32Array(WORLD * WORLD);
+const heightMap = new Float32Array(WORLD * WORLD);
 export const colorMap = new Uint8Array(WORLD * WORLD * 3);
 export const fogMap = new Uint8Array(WORLD * WORLD);
 export let fogVersion = 0;
@@ -15,7 +15,7 @@ export function heightAt(x, z) {
 }
 
 function terrainColor(h, x, z) {
-  const rng = seedRng(x * 7919 + z * 104729 + SIG);
+  const rng = seedRng(x * 7919 + z * 104729 + 1337);
   const v = rng();
   if (h < 0) return [40, 85, 130];
   if (h < 0.4) return v > 0.5 ? [210, 195, 155] : [200, 185, 145];
@@ -47,7 +47,7 @@ export function revealFog(wx, wz, radius) {
   for (let z = cz - rr; z <= cz + rr; z++) for (let x = cx - rr; x <= cx + rr; x++) {
     if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) continue;
     const dx = x - cx, dz = z - cz;
-    if (dx * dx + dz * dz <= radius * radius) { if (!fogMap[z * WORLD + x]) { fogMap[z * WORLD + x] = 1; fogVersion++; } }
+    if (dx * dx + dz * dz <= radius * radius && !fogMap[z * WORLD + x]) { fogMap[z * WORLD + x] = 1; fogVersion++; }
   }
 }
 
@@ -74,11 +74,11 @@ export function assignLandmarkHeights() {
 export const beacons = [];
 export let beaconCount = 0;
 export function placeBeacon(state) {
-  if (beaconCount >= MB) { state.setStatus('Beacon cap reached (' + MB + ').'); return; }
+  if (beaconCount >= MB) { state.setStatus('Maximum beacons placed (' + MB + '/' + MB + '). Open your chart to publish.'); return; }
   const wx = state.px + Math.sin(state.camAngle) * 10;
   const wz = state.pz + Math.cos(state.camAngle) * 10;
   const h = heightAt(wx, wz);
-  if (h <= 0) { state.setStatus('Cannot place in water.'); return; }
+  if (h <= 0) { state.setStatus('Beacons must be on dry land. Move inland.'); return; }
   beaconCount++;
   const bn = 'BEACON-' + String(beaconCount).padStart(2, '0');
   beacons.push({ name: bn, x: wx, z: wz, y: h + 0.85 });
@@ -125,16 +125,16 @@ function angDiff(a, b) {
 
 export function takeBearing(state) {
   const tx = findNearestTarget(state.px, state.pz, state.camAngle, bearings);
-  if (!tx) { state.setStatus('Nothing in range.'); return; }
+  if (!tx) { state.setStatus('No targets in range. Move closer to a cairn or beacon.'); return; }
   const dx = tx.x - state.px, dz = tx.z - state.pz;
   const trueB = Math.atan2(dx, -dz);
   const off = angDiff(state.camAngle, trueB);
   if (off > ALG) {
-    state.setStatus('Sight ' + (off * 180 / Math.PI).toFixed(1) + ' deg off ' + tx.name + ' - line up and press E again.');
+    state.setStatus('Crosshair is ' + (off * 180 / Math.PI).toFixed(1) + '° off ' + tx.name + '. Adjust aim and press E.');
     return;
   }
   bearings.push({ name: tx.name, x: tx.x, z: tx.z, b: state.camAngle, err: off * 180 / Math.PI });
-  state.setStatus('Bearing to ' + tx.name + ': ' + Math.round(state.camAngle * 180 / Math.PI) + ' deg');
+  state.setStatus('Bearing recorded: ' + tx.name + ' at ' + Math.round(state.camAngle * 180 / Math.PI) + '°. Take a second bearing to fix your position.');
   tryFix(state);
 }
 
@@ -159,7 +159,7 @@ export function tryFix(state) {
   hasFix = true;
   const err = Math.sqrt((lastFix.x - state.px) ** 2 + (lastFix.z - state.pz) ** 2);
   const spread = Math.sqrt((o1x - o2x) ** 2 + (o1z - o2z) ** 2);
-  state.setStatus('POSITION FIX - error ' + err.toFixed(1) + 'm - closure ' + spread.toFixed(1) + 'm - F plots on chart');
+  state.setStatus('Position fixed! Error: ' + err.toFixed(1) + 'm. Press F to plot on your chart, or TAB to open it.');
   bearings.length = 0;
   const fi = document.getElementById('fix-info');
   fi.style.display = 'block';
