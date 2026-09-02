@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATLASWRIGHT</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a08;color:#ede8df;font-family:Georgia,serif;overflow:hidden;width:100vw;height:100vh}
+canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
+#hud{position:absolute;top:0;left:0;right:0;padding:12px 18px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10}
+#hud>*{pointer-events:auto}
+.hud-left{display:flex;flex-direction:column;gap:6px}
+.hud-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.hud-box{background:rgba(18,16,12,0.88);border:1px solid #5a4a30;padding:6px 12px;font-size:13px;color:#d4c8a8;letter-spacing:0.5px;border-radius:3px}
+.hud-box.big{font-size:15px;padding:8px 14px;border-color:#c08030;color:#e8d8b0}
+#compass{font-size:16px;font-weight:bold;color:#c08030;text-align:center;min-width:90px}
+#status-bar{position:absolute;bottom:0;left:0;right:0;padding:10px 18px;background:rgba(18,16,12,0.88);border-top:1px solid #5a4a30;font-size:13px;color:#d4c8a8;text-align:center;z-index:10}
+#instructions{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);background:rgba(18,16,12,0.92);border:1px solid #5a4a30;padding:10px 16px;font-size:12px;color:#b8a878;text-align:center;border-radius:3px;z-index:10;pointer-events:none;line-height:1.7}
+#chart-overlay{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(18,16,12,0.7);z-index:20;justify-content:center;align-items:center}
+#chart-overlay.visible{display:flex}
+#chart-panel{background:#ede8df;width:90vw;max-width:960px;height:80vh;max-height:640px;border:3px solid #1f1c18;position:relative;display:flex;flex-direction:column}
+#chart-header{padding:8px 14px;border-bottom:2px solid #1f1c18;display:flex;justify-content:space-between;align-items:center;background:#e4dece}
+#chart-header h2{font-size:14px;color:#1f1c18;letter-spacing:1px;text-transform:uppercase}
+#chart-tools{display:flex;gap:8px;align-items:center}
+#chart-tools button{padding:4px 10px;border:1px solid #8a5a22;background:#c08030;color:#fff;font-family:Georgia,serif;font-size:12px;cursor:pointer;border-radius:2px}
+#chart-tools button:hover{background:#d4922e}
+#chart-tools button.active{background:#8a5a22}
+#chart-tools button.publish{background:#3a6830;border-color:#2a4820}
+#chart-tools button.publish:hover{background:#4a8040}
+#chart-canvas-wrap{flex:1;position:relative;overflow:hidden}
+#chart-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+#chart-info{padding:4px 14px;border-top:1px solid #b8a878;font-size:11px;color:#6a5a40;background:#e4dece}
+#publish-overlay{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(18,16,12,0.9);z-index:30;justify-content:center;align-items:center}
+#publish-overlay.visible{display:flex}
+#publish-card{background:#ede8df;border:3px solid #1f1c18;padding:30px 50px;text-align:center}
+#publish-card h2{font-size:24px;color:#1f1c18;margin-bottom:16px;letter-spacing:2px;text-transform:uppercase}
+#publish-card p{font-size:14px;color:#5a4a30;margin-bottom:12px}
+#publish-card .published-text{font-size:48px;color:#3a6830;font-weight:bold;letter-spacing:4px;opacity:0;transition:opacity 0.8s}
+#publish-card .published-text.visible{opacity:1}
+#publish-card button{margin-top:16px;padding:8px 20px;border:1px solid #5a4a30;background:#c08030;color:#fff;font-family:Georgia,serif;font-size:14px;cursor:pointer;border-radius:2px}
+#publish-card button:hover{background:#d4922e}
+#start-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(18,16,12,0.95);z-index:40;display:flex;justify-content:center;align-items:center}
+#start-overlay.hidden{display:none}
+#start-card{text-align:center;max-width:500px}
+#start-card h1{font-size:36px;color:#c08030;letter-spacing:3px;margin-bottom:8px}
+#start-card .tagline{font-size:14px;color:#b8a878;font-style:italic;margin-bottom:24px}
+#start-card .controls{font-size:12px;color:#8a7a60;line-height:2;text-align:left;margin-bottom:24px}
+#start-card button{padding:12px 32px;border:2px solid #c08030;background:transparent;color:#c08030;font-family:Georgia,serif;font-size:16px;cursor:pointer;letter-spacing:2px;border-radius:2px;transition:all 0.2s}
+#start-card button:hover{background:#c08030;color:#fff}
+#minimap{position:absolute;bottom:50px;right:16px;border:2px solid #5a4a30;z-index:10;opacity:0.85}
+</style>
+</head>
+<body>
+<canvas id="world-canvas"></canvas>
+<canvas id="minimap" width="160" height="160"></canvas>
+<div id="hud">
+<div class="hud-left">
+<div class="hud-box" id="compass">---</div>
+<div class="hud-box" id="beacon-count">Beacons: 0/24</div>
+</div>
+<div class="hud-right">
+<div class="hud-box big" id="mode-label">FIELD</div>
+<div class="hud-box" id="fix-info" style="display:none"></div>
+</div>
+</div>
+<div id="instructions">
+WASD move | Mouse drag look | Shift run | Space jump<br>
+Left Click plant beacon | E take bearing | F plot fix on chart<br>
+TAB open chart | Z undo | ESC close chart | Right Click release mouse
+</div>
+<div id="status-bar">Explore the island. Find landmarks. Take bearings. Draw your chart.</div>
+<div id="chart-overlay">
+<div id="chart-panel">
+<div id="chart-header">
+<h2>Survey Chart</h2>
+<div id="chart-tools">
+<button id="btn-draw" class="active">Draw</button>
+<button id="btn-undo">Undo</button>
+<button id="btn-stamp">Plot Fix</button>
+<button id="btn-publish" class="publish">PUBLISH CHART</button>
+</div>
+</div>
+<div id="chart-canvas-wrap">
+<canvas id="chart-canvas"></canvas>
+</div>
+<div id="chart-info">LMB draw ink | Z undo | F plot last fix | TAB return to field</div>
+</div>
+</div>
+<div id="publish-overlay">
+<div id="publish-card">
+<h2>Chart Published</h2>
+<p id="publish-stats"></p>
+<div class="published-text" id="published-text">PUBLISHED</div>
+<button id="btn-new-session">Start New Expedition</button>
+</div>
+</div>
+<div id="start-overlay">
+<div id="start-card">
+<h1>ATLASWRIGHT</h1>
+<div class="tagline">The feeling of a map you drew by hand guiding a stranger safely home.</div>
+<div class="controls">
+<strong>Naked Sweep</strong> - Reward-Free Prototype<br><br>
+WASD - Move | Mouse - Look | Shift - Run | Space - Jump<br>
+LMB - Plant Survey Beacon | E - Take Bearing<br>
+TAB - Open Chart | Z - Undo | F - Plot Fix<br><br>
+Find cairns, take two bearings to different targets,<br>
+then open your chart and publish.
+</div>
+<button id="btn-start">BEGIN EXPEDITION</button>
+</div>
+</div>
+<script type="module" src="game.js"></script>
+</body>
+</html>

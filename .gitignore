@@ -1,0 +1,4 @@
+.freebuff/
+*.log
+*.err
+node_modules/
