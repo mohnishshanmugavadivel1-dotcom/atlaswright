@@ -1,9 +1,10 @@
-// world.js � terrain, fog, landmarks, beacons, bearings, resection
+// world.js — terrain, fog, landmarks, beacons, bearings, resection
+// Pure logic only. No DOM access. All state is module-level.
 import { seedRng, initNoise, fbm, lerp } from './noise.js';
 
 export const WORLD = 1024, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
 
-// Terrain data
+// --- Terrain ---
 const heightMap = new Float32Array(WORLD * WORLD);
 export const colorMap = new Uint8Array(WORLD * WORLD * 3);
 export const fogMap = new Uint8Array(WORLD * WORLD);
@@ -41,7 +42,7 @@ export function buildTerrain() {
   }
 }
 
-// Fog of war
+// --- Fog of war ---
 export function revealFog(wx, wz, radius) {
   const cx = Math.floor(wx), cz = Math.floor(wz), rr = Math.ceil(radius);
   for (let z = cz - rr; z <= cz + rr; z++) for (let x = cx - rr; x <= cx + rr; x++) {
@@ -57,40 +58,42 @@ export function calcExplored() {
   return (c / fogMap.length * 100).toFixed(1);
 }
 
-// Landmarks
+// --- Landmarks ---
 export const landmarks = [
   { name: 'CAIRN-A', x: 380, z: 380 },
   { name: 'CAIRN-B', x: 680, z: 520 },
   { name: 'CAIRN-C', x: 460, z: 700 }
 ];
 
-// Heights must be assigned AFTER buildTerrain() populates heightMap.
-// Called from game.js init: assignLandmarkHeights();
 export function assignLandmarkHeights() {
   landmarks.forEach(l => { l.y = Math.max(heightAt(l.x, l.z), 2) + 4; });
 }
 
-// Beacons
+// --- Beacons ---
 export const beacons = [];
 export let beaconCount = 0;
-export function placeBeacon(state) {
-  if (beaconCount >= MB) { state.setStatus('Maximum beacons placed (' + MB + '/' + MB + '). Open your chart to publish.'); return; }
-  const wx = state.px + Math.sin(state.camAngle) * 10;
-  const wz = state.pz + Math.cos(state.camAngle) * 10;
+
+// Returns { ok: true, name } or { ok: false, reason }
+export function placeBeacon(px, pz, camAngle) {
+  if (beaconCount >= MB) return { ok: false, reason: 'Maximum beacons placed (' + MB + '/' + MB + '). Open your chart to publish.' };
+  const wx = px + Math.sin(camAngle) * 10;
+  const wz = pz + Math.cos(camAngle) * 10;
   const h = heightAt(wx, wz);
-  if (h <= 0) { state.setStatus('Beacons must be on dry land. Move inland.'); return; }
+  if (h <= 0) return { ok: false, reason: 'Beacons must be on dry land. Move inland.' };
   beaconCount++;
   const bn = 'BEACON-' + String(beaconCount).padStart(2, '0');
   beacons.push({ name: bn, x: wx, z: wz, y: h + 0.85 });
-  state.setStatus(bn + ' planted.');
-  document.getElementById('beacon-count').textContent = 'Beacons: ' + beaconCount + '/' + MB;
+  return { ok: true, name: bn };
 }
 
-// Bearings & position fix
+// --- Bearings & resection ---
 export const bearings = [];
 export let lastFix = null, hasFix = false;
 
-// Shared target finder � used by both takeBearing() and render() alignment check
+function angDiff(a, b) {
+  return Math.abs(((a - b + Math.PI) % (Math.PI * 2)) - Math.PI);
+}
+
 export function findNearestTarget(px, pz, camAngle, bearingsList) {
   const recorded = new Set(bearingsList.map(b => b.name));
   let best = null, bestScore = Infinity;
@@ -117,51 +120,48 @@ export function isAligned(px, pz, camAngle, bearingsList) {
   return angDiff(camAngle, trueB) <= ALG;
 }
 
-function angDiff(a, b) {
-  return Math.abs(((a - b + Math.PI) % (Math.PI * 2)) - Math.PI);
-}
-
-
-
-export function takeBearing(state) {
-  const tx = findNearestTarget(state.px, state.pz, state.camAngle, bearings);
-  if (!tx) { state.setStatus('No targets in range. Move closer to a cairn or beacon.'); return; }
-  const dx = tx.x - state.px, dz = tx.z - state.pz;
+// Returns { ok, reason?, bearing?, fix? }
+export function takeBearing(px, pz, camAngle) {
+  const tx = findNearestTarget(px, pz, camAngle, bearings);
+  if (!tx) return { ok: false, reason: 'No targets in range. Move closer to a cairn or beacon.' };
+  const dx = tx.x - px, dz = tx.z - pz;
   const trueB = Math.atan2(dx, -dz);
-  const off = angDiff(state.camAngle, trueB);
-  if (off > ALG) {
-    state.setStatus('Crosshair is ' + (off * 180 / Math.PI).toFixed(1) + '° off ' + tx.name + '. Adjust aim and press E.');
-    return;
-  }
-  bearings.push({ name: tx.name, x: tx.x, z: tx.z, b: state.camAngle, err: off * 180 / Math.PI });
-  state.setStatus('Bearing recorded: ' + tx.name + ' at ' + Math.round(state.camAngle * 180 / Math.PI) + '°. Take a second bearing to fix your position.');
-  tryFix(state);
+  const off = angDiff(camAngle, trueB);
+  if (off > ALG) return { ok: false, reason: 'Crosshair is ' + (off * 180 / Math.PI).toFixed(1) + '° off ' + tx.name + '. Adjust aim and press E.' };
+  bearings.push({ name: tx.name, x: tx.x, z: tx.z, b: camAngle, err: off * 180 / Math.PI });
+  const fix = tryFix(px, pz);
+  return { ok: true, bearing: tx.name, degrees: Math.round(camAngle * 180 / Math.PI), fix };
 }
 
-export function tryFix(state) {
+// Returns null or { x, z, err, spread }
+function tryFix(px, pz) {
   let a = null, b = null;
   for (let i = bearings.length - 1; i >= 0; i--) {
     if (!a) a = bearings[i];
     else if (bearings[i].name !== a.name) { b = bearings[i]; break; }
   }
-  if (!a || !b) return;
+  if (!a || !b) return null;
   const u1x = Math.sin(a.b), u1z = -Math.cos(a.b);
   const u2x = Math.sin(b.b), u2z = -Math.cos(b.b);
   const det = u1x * (-u2z) - (-u2x) * u1z;
-  if (Math.abs(det) < 0.0005) { state.setStatus('Bearings nearly parallel.'); return; }
+  if (Math.abs(det) < 0.0005) return null;
   const rhsx = a.x - b.x, rhsz = a.z - b.z;
   const t1 = (rhsx * (-u2z) - (-u2x) * rhsz) / det;
   const t2 = (u1x * rhsz - rhsx * u1z) / det;
-  if (t1 <= 0 || t2 <= 0) { state.setStatus('Bad geometry - reposition.'); return; }
+  if (t1 <= 0 || t2 <= 0) return null;
   const o1x = a.x - u1x * t1, o1z = a.z - u1z * t1;
   const o2x = b.x - u2x * t2, o2z = b.z - u2z * t2;
-  lastFix = { x: (o1x + o2x) / 2, z: (o1z + o2z) / 2 };
-  hasFix = true;
-  const err = Math.sqrt((lastFix.x - state.px) ** 2 + (lastFix.z - state.pz) ** 2);
+  const fix = { x: (o1x + o2x) / 2, z: (o1z + o2z) / 2 };
+  const err = Math.sqrt((fix.x - px) ** 2 + (fix.z - pz) ** 2);
   const spread = Math.sqrt((o1x - o2x) ** 2 + (o1z - o2z) ** 2);
-  state.setStatus('Position fixed! Error: ' + err.toFixed(1) + 'm. Press F to plot on your chart, or TAB to open it.');
+  lastFix = fix; hasFix = true;
   bearings.length = 0;
-  const fi = document.getElementById('fix-info');
-  fi.style.display = 'block';
-  fi.textContent = 'Fix: (' + Math.round(lastFix.x) + ', ' + Math.round(lastFix.z) + ') err: ' + err.toFixed(1) + 'm';
+  return { x: fix.x, z: fix.z, err, spread };
+}
+
+// Reset all game state
+export function resetWorld() {
+  fogMap.fill(0); fogVersion = 0;
+  beacons.length = 0; beaconCount = 0;
+  bearings.length = 0; lastFix = null; hasFix = false;
 }

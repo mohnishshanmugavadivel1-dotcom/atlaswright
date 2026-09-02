@@ -1,13 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Mock document for DOM-dependent code
-if (typeof globalThis.document === 'undefined') {
-  globalThis.document = {
-    getElementById: () => ({ style: {}, textContent: '', classList: { add() {}, remove() {} }, getContext: () => ({}) }),
-  };
-}
-
 // --- noise.js ---
 import { seedRng, initNoise, noise2d, fbm, lerp } from '../noise.js';
 
@@ -68,10 +61,10 @@ describe('fbm', () => {
 import {
   WORLD, FR,
   heightAt, buildTerrain, assignLandmarkHeights,
-  findNearestTarget, isAligned, tryFix,
+  findNearestTarget, isAligned,
   revealFog, calcExplored, fogVersion,
   lastFix, hasFix, colorMap,
-  landmarks, bearings,
+  landmarks, bearings, takeBearing, resetWorld,
 } from '../world.js';
 
 describe('heightAt', () => {
@@ -123,8 +116,6 @@ describe('findNearestTarget', () => {
   });
 
   it('excludes recorded targets', () => {
-    // Player near CAIRN-A, looking toward it, but CAIRN-A is recorded
-    // Should skip to next nearest target (CAIRN-B or CAIRN-C if in range)
     const t = findNearestTarget(380, 400, 0, [{ name: 'CAIRN-A' }]);
     assert.ok(t, 'should find next unrecorded target');
     assert.notEqual(t.name, 'CAIRN-A');
@@ -137,7 +128,6 @@ describe('findNearestTarget', () => {
   });
 
   it('respects range limit (FR)', () => {
-    // Place player far from all landmarks
     const t = findNearestTarget(10, 10, 0, []);
     assert.equal(t, null, 'too far from any target');
   });
@@ -145,16 +135,12 @@ describe('findNearestTarget', () => {
 
 describe('isAligned', () => {
   it('returns true when crosshair points at target', () => {
-    // Player at 380,380 looking toward CAIRN-A at 380,380 (same spot)
-    // Actually need player NOT at landmark. Let's compute the angle.
-    const px = 380, pz = 400; // 20 units south of CAIRN-A
+    const px = 380, pz = 400;
     const dx = 380 - px, dz = 380 - pz;
-    const angle = Math.atan2(dx, -dz); // should point north
+    const angle = Math.atan2(dx, -dz);
     assert.ok(isAligned(px, pz, angle, []));
   });
   it('returns false when off-angle', () => {
-    // CAIRN-A at (380,380), player at (380,400) - target is north
-    // Player looking east (angle = PI/2) - should NOT be aligned
     assert.ok(!isAligned(380, 400, Math.PI / 2, []));
   });
 });
@@ -184,22 +170,40 @@ describe('calcExplored', () => {
 describe('resection (two-bearing fix)', () => {
   it('computes correct position from two bearings', () => {
     bearings.length = 0;
-    const state = { px: 512, pz: 512, camAngle: 0, setStatus: () => {} };
 
-    // Bearing 1: from (512,512) toward CAIRN-A (380,380)
+    // Place player at (512, 512), take bearing toward CAIRN-A
     const dx1 = 380 - 512, dz1 = 380 - 512;
     bearings.push({ name: 'CAIRN-A', x: 380, z: 380, b: Math.atan2(dx1, -dz1), err: 0 });
 
-    // Bearing 2: from (512,512) toward CAIRN-B (680,520)
+    // Take bearing toward CAIRN-B (triggers resection)
     const dx2 = 680 - 512, dz2 = 520 - 512;
     bearings.push({ name: 'CAIRN-B', x: 680, z: 520, b: Math.atan2(dx2, -dz2), err: 0 });
 
-    tryFix(state);
+    // Manually call takeBearing logic: find a target, add bearing, then tryFix runs
+    // Actually, let's just directly test via the resection path
+    // The takeBearing function finds target, adds bearing, then calls tryFix internally
+    // But we need to set up bearings directly since we're testing resection
+    // Since tryFix is private, we test through takeBearing which calls it
 
-    assert.ok(hasFix, 'should produce a fix');
-    assert.ok(Math.abs(lastFix.x - 512) < 5, `fix x=${lastFix.x} should be near 512`);
-    assert.ok(Math.abs(lastFix.z - 512) < 5, `fix z=${lastFix.z} should be near 512`);
+    // Set up: two bearings already recorded, then take a third
+    // Actually, let's test the simplest path:
+    // Player at (512, 512), looking at CAIRN-A, press E -> records bearing
+    // Player at (512, 512), looking at CAIRN-B, press E -> records bearing + triggers resection
 
+    bearings.length = 0;
+    // Compute angle from player to CAIRN-A
+    const a1 = Math.atan2(380 - 512, -(380 - 512));
+    const r1 = takeBearing(512, 512, a1);
+    assert.ok(r1.ok, 'first bearing should succeed');
+    assert.equal(r1.bearing, 'CAIRN-A');
+    assert.equal(r1.fix, null, 'no fix yet with one bearing');
 
+    // Compute angle from player to CAIRN-B
+    const a2 = Math.atan2(680 - 512, -(520 - 512));
+    const r2 = takeBearing(512, 512, a2);
+    assert.ok(r2.ok, 'second bearing should succeed');
+    assert.ok(r2.fix, 'should produce a fix');
+    assert.ok(Math.abs(r2.fix.x - 512) < 5, `fix x=${r2.fix.x} should be near 512`);
+    assert.ok(Math.abs(r2.fix.z - 512) < 5, `fix z=${r2.fix.z} should be near 512`);
   });
 });

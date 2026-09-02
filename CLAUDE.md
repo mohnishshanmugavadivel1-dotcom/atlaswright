@@ -1,20 +1,24 @@
 # ATLASWRIGHT
 
-Browser-based cartography survey game. "Naked Sweep" prototype — reward-free survey loop.
+Browser-based cartography survey game. Reward-free survey loop: explore, take bearings, compute position via resection, draw a chart.
 
 ## Project structure
 
-- `index.html` — game page, HUD, chart overlay, CSS
-- `game.js` — orchestrator, state, game loop
-- `noise.js` — seeded simplex noise + fbm
-- `world.js` — terrain, fog, landmarks, beacons, bearings, resection
-- `renderer.js` — canvas rendering, minimap, HUD, crosshair
-- `chart.js` — chart overlay, drawing, fix stamping, publish
-- `input.js` — pointer lock, WASD/mouse, keyboard bindings
+- `index.html` — game page, HUD, chart overlay, CSS (design tokens via CSS custom properties)
+- `noise.js` — seeded simplex noise + fbm (pure math, 42 lines)
+- `world.js` — terrain, fog, landmarks, beacons, bearings, resection (pure logic, zero DOM, 167 lines)
+- `game.js` — state, input, rendering, chart, game loop (all DOM, 394 lines)
+- `tests/contract.test.js` — 25 behavior tests (noise, terrain, targets, resection, fog)
+
+## Architecture
+
+Three files. `noise.js` and `world.js` are pure logic with no DOM access. `game.js` owns all browser interaction. This makes `world.js` fully testable without mocks.
+
+Key constants: `WORLD=1024` (map size), `PPM=2.5` (pixels per meter), `FR=320` (field radius), `MB=24` (max beacons), `ALG=0.0698` (alignment threshold in radians ~4°).
 
 ## Tech
 
-Zero dependencies. 6 ES modules. Runs from any static file server.
+Zero dependencies. ES modules. Runs from any static file server (`python3 -m http.server`).
 
 ## Skill routing
 
