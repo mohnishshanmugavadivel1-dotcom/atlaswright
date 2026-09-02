@@ -1,4 +1,4 @@
-// world.js — terrain, fog, landmarks, beacons, bearings, resection
+// world.js ï¿½ terrain, fog, landmarks, beacons, bearings, resection
 import { seedRng, initNoise, fbm, lerp } from './noise.js';
 
 export const WORLD = 1024, SIG = 1337, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
@@ -62,7 +62,12 @@ export const landmarks = [
   { name: 'CAIRN-B', x: 680, z: 520 },
   { name: 'CAIRN-C', x: 460, z: 700 }
 ];
-landmarks.forEach(l => { l.y = Math.max(heightAt(l.x, l.z), 2) + 4; });
+
+// Heights must be assigned AFTER buildTerrain() populates heightMap.
+// Called from game.js init: assignLandmarkHeights();
+export function assignLandmarkHeights() {
+  landmarks.forEach(l => { l.y = Math.max(heightAt(l.x, l.z), 2) + 4; });
+}
 
 // Beacons
 export const beacons = [];
@@ -84,7 +89,7 @@ export function placeBeacon(state) {
 export const bearings = [];
 export let lastFix = null, hasFix = false;
 
-// Shared target finder — used by both takeBearing() and render() alignment check
+// Shared target finder ï¿½ used by both takeBearing() and render() alignment check
 export function findNearestTarget(px, pz, camAngle, bearingsList) {
   const recorded = new Set(bearingsList.map(b => b.name));
   let best = null, bestScore = Infinity;

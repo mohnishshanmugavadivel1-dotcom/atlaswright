@@ -1,6 +1,6 @@
-// game.js — orchestrator: state, init, update, render, gameLoop
+// game.js ï¿½ orchestrator: state, init, update, render, gameLoop
 import { initNoise } from './noise.js';
-import { WORLD, SR, heightAt, buildTerrain, revealFog, calcExplored, beacons, beaconCount, bearings, lastFix, hasFix } from './world.js';
+import { WORLD, SR, heightAt, buildTerrain, assignLandmarkHeights, revealFog, calcExplored, beacons, beaconCount, bearings, lastFix, hasFix } from './world.js';
 import { initCanvas, render, setStatus } from './renderer.js';
 import { initInput } from './input.js';
 import { initChart } from './chart.js';
@@ -65,6 +65,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initCanvas();
   initNoise(1337);
   buildTerrain();
+  assignLandmarkHeights();
   initInput(state, {
     canvas: document.getElementById('world-canvas'),
     hasFix: () => hasFix,
