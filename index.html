@@ -86,6 +86,8 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 <div id="chart-tools">
 <button id="btn-undo">Undo</button>
 <button id="btn-stamp">Plot Fix</button>
+<button id="btn-export">Export</button>
+<button id="btn-import">Import</button>
 <button id="btn-publish" class="publish">PUBLISH CHART</button>
 </div>
 </div>
@@ -100,6 +102,7 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 <h2>Chart Published</h2>
 <p id="publish-stats"></p>
 <div class="published-text" id="published-text">PUBLISHED</div>
+<button id="btn-export-published">Export Chart</button>
 <button id="btn-new-session">Start New Expedition</button>
 </div>
 </div>
@@ -107,6 +110,13 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 <div id="start-card">
 <h1>ATLASWRIGHT</h1>
 <div class="tagline">The feeling of a map you drew by hand guiding a stranger safely home.</div>
+<div id="resume-prompt" style="display:none;margin-bottom:var(--sp-xl);padding:var(--sp-md);border:1px solid var(--brass);border-radius:4px;background:rgba(192,128,48,0.1)">
+<p style="font-family:var(--font-body);font-size:14px;color:var(--parchment);margin-bottom:var(--sp-sm)">You have a saved expedition.</p>
+<div style="display:flex;gap:var(--sp-sm);justify-content:center">
+<button id="btn-resume" style="padding:var(--sp-sm) var(--sp-lg);border:1px solid var(--brass);background:var(--brass);color:#fff;font-family:var(--font-body);font-size:13px;cursor:pointer;border-radius:2px">Resume</button>
+<button id="btn-fresh" style="padding:var(--sp-sm) var(--sp-lg);border:1px solid var(--ink-mid);background:transparent;color:var(--ink-light);font-family:var(--font-body);font-size:13px;cursor:pointer;border-radius:2px">Start Fresh</button>
+</div>
+</div>
 <div class="controls">
 <strong>Survey the island. Draw your chart.</strong><br><br>
 <span style="color:var(--ink-light)">WASD</span> move &middot; <span style="color:var(--ink-light)">Mouse</span> look &middot; <span style="color:var(--ink-light)">Shift</span> run &middot; <span style="color:var(--ink-light)">Space</span> jump<br>

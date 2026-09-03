@@ -64,8 +64,8 @@ import {
   findNearestTarget, isAligned,
   revealFog, calcExplored, fogVersion,
   lastFix, hasFix, colorMap,
-  landmarks, beacons, bearings,
-  placeBeacon, takeBearing, resetWorld,
+  landmarks, beacons, bearings, beaconCount,
+  placeBeacon, takeBearing, resetWorld, restoreState,
 } from '../world.js';
 
 describe('heightAt', () => {
@@ -299,5 +299,26 @@ describe('resetWorld', () => {
     assert.equal(beacons.length, 0, 'beacons cleared');
     assert.equal(bearings.length, 0, 'bearings cleared');
     assert.equal(hasFix, false, 'hasFix reset');
+  });
+});
+
+describe('restoreState', () => {
+  it('restores beacons, bearings, and fix from saved data', () => {
+    resetWorld();
+    const saved = {
+      beacons: [{ name: 'BEACON-01', x: 520, z: 520, y: 5 }],
+      beaconCount: 1,
+      bearings: [{ name: 'CAIRN-A', x: 380, z: 380, b: -0.78, err: 0.5 }],
+      lastFix: { x: 510, z: 511 },
+      hasFix: true,
+    };
+    restoreState(saved);
+    assert.equal(beacons.length, 1, 'beacon restored');
+    assert.equal(beacons[0].name, 'BEACON-01');
+    assert.equal(beaconCount, 1, 'beaconCount restored');
+    assert.equal(bearings.length, 1, 'bearing restored');
+    assert.equal(bearings[0].name, 'CAIRN-A');
+    assert.deepEqual(lastFix, { x: 510, z: 511 }, 'lastFix restored');
+    assert.equal(hasFix, true, 'hasFix restored');
   });
 });

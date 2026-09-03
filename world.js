@@ -165,3 +165,14 @@ export function resetWorld() {
   beacons.length = 0; beaconCount = 0;
   bearings.length = 0; lastFix = null; hasFix = false;
 }
+
+// Restore saved state (for persistence)
+export function restoreState(data) {
+  beacons.length = 0;
+  data.beacons.forEach(b => beacons.push(b));
+  beaconCount = data.beaconCount || 0;
+  bearings.length = 0;
+  data.bearings.forEach(b => bearings.push(b));
+  lastFix = data.lastFix || null;
+  hasFix = data.hasFix || false;
+}

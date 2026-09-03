@@ -6,7 +6,7 @@ import {
   revealFog, calcExplored, fogVersion, colorMap, fogMap,
   beacons, beaconCount, bearings, lastFix, hasFix,
   landmarks, findNearestTarget, isAligned,
-  placeBeacon as placeBeaconLogic, takeBearing as takeBearingLogic, resetWorld,
+  placeBeacon as placeBeaconLogic, takeBearing as takeBearingLogic, resetWorld, restoreState,
 } from './world.js';
 
 // --- State ---
@@ -28,6 +28,74 @@ let _exploredTimer = 0;
 // --- Chart state ---
 const chart = { strokes: [], fixes: [], currentStroke: [], published: false };
 let chartCanvas, chartCtx;
+
+// --- Persistence ---
+const SAVE_KEY = 'atlaswright-save';
+const EXPORT_VERSION = 1;
+
+function saveGame() {
+  const data = {
+    v: EXPORT_VERSION,
+    px: state.px, pz: state.pz, camAngle: state.camAngle,
+    beacons: beacons.map(b => ({ name: b.name, x: b.x, z: b.z, y: b.y })),
+    beaconCount,
+    bearings: bearings.map(b => ({ name: b.name, x: b.x, z: b.z, b: b.b, err: b.err })),
+    lastFix, hasFix,
+    chart: { strokes: chart.strokes, fixes: chart.fixes, published: chart.published },
+  };
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* quota exceeded */ }
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (data.v !== EXPORT_VERSION) return null;
+    return data;
+  } catch (e) { return null; }
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+function importChart(jsonStr) {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (data.v !== EXPORT_VERSION) return { ok: false, reason: 'Unsupported chart version.' };
+    // Load into chart overlay for viewing
+    chart.strokes = data.chart.strokes || [];
+    chart.fixes = data.chart.fixes || [];
+    chart.published = true;
+    // Restore landmarks and beacons for display
+    if (data.beacons) {
+      beacons.length = 0;
+      data.beacons.forEach(b => beacons.push(b));
+    }
+    return { ok: true };
+  } catch (e) { return { ok: false, reason: 'Invalid chart file.' }; }
+}
+
+function exportChart() {
+  const data = {
+    v: EXPORT_VERSION,
+    px: state.px, pz: state.pz, camAngle: state.camAngle,
+    beacons: beacons.map(b => ({ name: b.name, x: b.x, z: b.z, y: b.y })),
+    beaconCount,
+    bearings: bearings.map(b => ({ name: b.name, x: b.x, z: b.z, b: b.b, err: b.err })),
+    lastFix, hasFix,
+    chart: { strokes: chart.strokes, fixes: chart.fixes, published: chart.published },
+  };
+  return JSON.stringify(data);
+}
+
+// Auto-save on meaningful changes
+let _autoSaveTimer = null;
+function scheduleSave() {
+  if (_autoSaveTimer) return;
+  _autoSaveTimer = setTimeout(() => { _autoSaveTimer = null; saveGame(); }, 500);
+}
 
 function setStatus(s) { document.getElementById('status-bar').textContent = s; }
 function worldToScreen(wx, wz) { return { x: (wx - state.px) * PPM + cW / 2, z: (wz - state.pz) * PPM + cH / 2 }; }
@@ -73,8 +141,18 @@ function initInput() {
   document.getElementById('btn-undo').onclick = doUndoStroke;
   document.getElementById('btn-stamp').onclick = doPlotFix;
   document.getElementById('btn-publish').onclick = doPublishChart;
+  document.getElementById('btn-export').onclick = doExportChart;
+  document.getElementById('btn-import').onclick = doImportChart;
+  document.getElementById('btn-export-published').onclick = doExportChart;
   document.getElementById('btn-start').onclick = startGame;
-  document.getElementById('btn-new-session').onclick = () => location.reload();
+  document.getElementById('btn-new-session').onclick = () => { clearSave(); location.reload(); };
+  // Resume prompt
+  const saved = loadGame();
+  if (saved && saved.beacons && saved.beacons.length > 0) {
+    document.getElementById('resume-prompt').style.display = 'block';
+    document.getElementById('btn-resume').onclick = () => { resumeGame(saved); };
+    document.getElementById('btn-fresh').onclick = () => { clearSave(); startGame(); };
+  }
 }
 
 // --- Game actions (DOM-coupled) ---
@@ -82,12 +160,14 @@ function doPlaceBeacon() {
   const r = placeBeaconLogic(state.px, state.pz, state.camAngle);
   setStatus(r.reason || r.name + ' planted.');
   document.getElementById('beacon-count').textContent = 'Beacons: ' + beaconCount + '/' + MB;
+  if (r.ok) scheduleSave();
 }
 
 function doTakeBearing() {
   const r = takeBearingLogic(state.px, state.pz, state.camAngle);
   if (!r.ok) { setStatus(r.reason); return; }
   setStatus('Bearing recorded: ' + r.bearing + ' at ' + r.degrees + '°. Take a second bearing to fix your position.');
+  scheduleSave();
   if (r.fix) {
     setStatus('Position fixed! Error: ' + r.fix.err.toFixed(1) + 'm. Press F to plot on your chart, or TAB to open it.');
     const fi = document.getElementById('fix-info');
@@ -102,6 +182,7 @@ function doPlotFix() {
   chart.fixes.push({ x: (lastFix.x + ext) / (2 * ext) * cw, z: (lastFix.z + ext) / (2 * ext) * ch });
   drawChart();
   setStatus('Fix plotted on chart.');
+  scheduleSave();
 }
 
 function doUndoStroke() {
@@ -194,6 +275,50 @@ function doPublishChart() {
     'Beacons: ' + beaconCount + ' | Fixes: ' + chart.fixes.length +
     ' | Strokes: ' + chart.strokes.length + ' | Explored: ' + calcExplored() + '%';
   setTimeout(() => { document.getElementById('published-text').classList.add('visible'); }, 500);
+  scheduleSave();
+}
+
+function doExportChart() {
+  const json = exportChart();
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'atlaswright-chart.json'; a.click();
+  URL.revokeObjectURL(url);
+  setStatus('Chart exported. Share the file with someone!');
+}
+
+function doImportChart() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = importChart(reader.result);
+      if (result.ok) {
+        openChart();
+        setStatus('Chart imported. View it on the chart overlay.');
+      } else {
+        setStatus('Import failed: ' + result.reason);
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function resumeGame(data) {
+  state.px = data.px; state.pz = data.pz; state.camAngle = data.camAngle;
+  restoreState(data);
+  // Rebuild fog around saved position
+  revealFog(state.px, state.pz, 200);
+  // Restore chart
+  chart.strokes = data.chart.strokes || [];
+  chart.fixes = data.chart.fixes || [];
+  chart.published = data.chart.published || false;
+  startGame();
 }
 
 // --- Rendering ---
@@ -341,7 +466,7 @@ function update(delta) {
   state.pz = Math.max(1, Math.min(WORLD - 2, state.pz));
   revealFog(state.px, state.pz, SR);
   _exploredTimer += delta;
-  if (_exploredTimer >= 1) { _exploredTimer = 0; state.exploredPct = calcExplored(); }
+  if (_exploredTimer >= 1) { _exploredTimer = 0; state.exploredPct = calcExplored(); scheduleSave(); }
 }
 
 // --- Game loop ---
