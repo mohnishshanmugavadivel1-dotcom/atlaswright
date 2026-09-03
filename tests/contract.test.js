@@ -322,3 +322,101 @@ describe('restoreState', () => {
     assert.equal(hasFix, true, 'hasFix restored');
   });
 });
+
+// --- chart.js export/import ---
+import { chart, exportChartJSON, importChartJSON } from '../chart.js';
+
+describe('exportChartJSON', () => {
+  it('serializes state with seed', () => {
+    const state = { seed: 4242, px: 500, pz: 500, camAngle: 0.5, startTime: 0, personalGoal: '' };
+    const json = exportChartJSON(state);
+    const data = JSON.parse(json);
+    assert.equal(data.v, 2);
+    assert.equal(data.seed, 4242);
+    assert.equal(data.px, 500);
+  });
+  it('serializes chart strokes and fixes', () => {
+    chart.strokes = [[{ x: 10, y: 20 }, { x: 30, y: 40 }]];
+    chart.fixes = [{ x: 100, z: 200 }];
+    const state = { seed: 1337, px: 0, pz: 0, camAngle: 0 };
+    const data = JSON.parse(exportChartJSON(state));
+    assert.equal(data.chart.strokes.length, 1);
+    assert.equal(data.chart.fixes.length, 1);
+    // Clean up
+    chart.strokes = []; chart.fixes = [];
+  });
+});
+
+describe('importChartJSON', () => {
+  it('imports v2 chart with seed and rebuilds terrain', () => {
+    resetWorld();
+    const exportData = {
+      v: 2, seed: 4242, px: 500, pz: 500, camAngle: 0,
+      beacons: [{ name: 'BEACON-01', x: 520, z: 520, y: 5 }],
+      beaconCount: 1, bearings: [], lastFix: null, hasFix: false,
+      chart: { strokes: [[{ x: 10, y: 20 }]], fixes: [{ x: 100, z: 200 }], published: false },
+    };
+    const state = { seed: 1337 };
+    const result = importChartJSON(JSON.stringify(exportData), state);
+    assert.equal(result.ok, true);
+    assert.equal(result.seed, 4242);
+    assert.equal(state.seed, 4242);
+    assert.equal(chart.strokes.length, 1);
+    assert.equal(chart.fixes.length, 1);
+    assert.equal(beacons.length, 1);
+    assert.equal(beacons[0].name, 'BEACON-01');
+  });
+
+  it('imports v1 chart (no seed) with default seed 1337', () => {
+    resetWorld();
+    const v1Data = {
+      v: 1, px: 400, pz: 400, camAngle: 0,
+      beacons: [], beaconCount: 0, bearings: [], lastFix: null, hasFix: false,
+      chart: { strokes: [], fixes: [], published: false },
+    };
+    const state = { seed: 9999 };
+    const result = importChartJSON(JSON.stringify(v1Data), state);
+    assert.equal(result.ok, true);
+    assert.equal(result.seed, 1337, 'v1 defaults to seed 1337');
+    assert.equal(state.seed, 1337);
+  });
+
+  it('rejects unsupported version', () => {
+    const badData = { v: 99 };
+    const result = importChartJSON(JSON.stringify(badData), {});
+    assert.equal(result.ok, false);
+    assert.ok(result.reason.includes('Unsupported'));
+  });
+
+  it('rejects invalid JSON', () => {
+    const result = importChartJSON('not json', {});
+    assert.equal(result.ok, false);
+    assert.ok(result.reason.includes('Invalid'));
+  });
+});
+
+// --- Terrain seed persistence ---
+describe('terrain seed persistence', () => {
+  it('same seed produces same terrain after rebuild', () => {
+    initNoise(1337); buildTerrain(1337);
+    const h1 = heightAt(300, 300);
+    initNoise(4242); buildTerrain(4242);
+    const h2 = heightAt(300, 300);
+    assert.notEqual(h1, h2, 'different seeds produce different terrain');
+    initNoise(1337); buildTerrain(1337);
+    const h3 = heightAt(300, 300);
+    assert.equal(h1, h3, 'same seed reproduces same terrain');
+  });
+
+  it('import switches terrain to imported seed', () => {
+    initNoise(1337); buildTerrain(1337);
+    const before = heightAt(400, 400);
+    const state = { seed: 1337 };
+    const data = { v: 2, seed: 4242, px: 0, pz: 0, camAngle: 0,
+      beacons: [], beaconCount: 0, bearings: [], lastFix: null, hasFix: false,
+      chart: { strokes: [], fixes: [], published: false } };
+    importChartJSON(JSON.stringify(data), state);
+    const after = heightAt(400, 400);
+    assert.notEqual(before, after, 'terrain changed after import');
+  });
+});
