@@ -1,4 +1,6 @@
 // game.js — orchestrator: state, input, persistence, game loop
+const EXPORT_VERSION = 2;
+
 import { initNoise } from './noise.js';
 import {
   WORLD, SR, PPM, MB, ALG,
@@ -7,7 +9,7 @@ import {
   beacons, beaconCount, bearings, lastFix, hasFix,
   placeBeacon as placeBeaconLogic, takeBearing as takeBearingLogic, restoreState,
 } from './world.js';
-import { initAudio, playBeaconSound, playBearingSound, toggleAudio } from './audio.js';
+import { initAudio, playBeaconSound, playBearingSound, playPublishSound, toggleAudio } from './audio.js';
 import {
   chart, initChart, drawChart, openChart, closeChart,
   doPlotFix as chartPlotFix, doUndoStroke as chartUndoStroke,
@@ -18,18 +20,19 @@ import { initRender, render as renderFrame } from './render.js';
 
 // --- State ---
 const state = {
-  mode: 0, started: false,
-  px: 512, pz: 512, pvelx: 0, pvely: 0,
+  mode: 0, started: false, countdown: 0,
+  px: 512, pz: 512, pvelx: 0, velZ: 0, pvely: 0,
   camAngle: 0, dt: 0, lastTS: 0,
   keys: {}, mouseDown: false, lastMX: 0, lastMY: 0, pointerLocked: false,
   onGround: false, exploredPct: 0,
   startTime: 0, personalGoal: '', seed: 1337,
 };
 
-// --- DOM refs ---
 let _exploredTimer = 0;
-
-
+let stamina = 100;
+let bobPhase = 0;
+let firstMoveTime = 0;
+let confetti = [];
 
 // --- Persistence ---
 const SAVE_KEY = 'atlaswright-save';
@@ -45,7 +48,7 @@ function saveGame() {
     lastFix, hasFix,
     chart: { strokes: chart.strokes, fixes: chart.fixes, published: chart.published },
   };
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* quota exceeded */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { /* quota */ }
 }
 
 function loadGame() {
@@ -54,7 +57,7 @@ function loadGame() {
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (data.v !== 1 && data.v !== EXPORT_VERSION) return null;
-    if (!data.seed) data.seed = 1337; // v1 saves lacked seed
+    if (!data.seed) data.seed = 1337;
     return data;
   } catch (e) { return null; }
 }
@@ -63,149 +66,231 @@ function clearSave() {
   try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
 }
 
-
-
-// Auto-save on meaningful changes
 let _autoSaveTimer = null;
 function scheduleSave() {
   if (_autoSaveTimer) return;
   _autoSaveTimer = setTimeout(() => { _autoSaveTimer = null; saveGame(); }, 500);
 }
 
-function setStatus(s) { document.getElementById('status-bar').textContent = s; }
+// --- Toast system ---
+let _toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('visible'), 3000);
+}
+
+function setStatus(s) {
+  document.getElementById('status-bar').textContent = s;
+}
+
+// --- Movement flash ---
+function showMoveFlash() {
+  if (firstMoveTime) return;
+  firstMoveTime = Date.now();
+  const el = document.getElementById('move-flash');
+  if (el) { el.classList.add('visible'); setTimeout(() => el.classList.remove('visible'), 3000); }
+}
+
+// --- Confetti ---
+function spawnConfetti() {
+  confetti = [];
+  for (let i = 0; i < 80; i++) {
+    confetti.push({
+      x: Math.random() * window.innerWidth,
+      y: -20 - Math.random() * 200,
+      vx: (Math.random() - 0.5) * 3,
+      vy: 1 + Math.random() * 3,
+      size: 4 + Math.random() * 6,
+      color: Math.random() > 0.5 ? '#c08030' : '#e8a840',
+      rot: Math.random() * Math.PI * 2,
+      rotSpeed: (Math.random() - 0.5) * 0.1,
+      life: 200 + Math.random() * 200,
+    });
+  }
+}
+
+function drawConfetti(ctx2d) {
+  if (confetti.length === 0) return;
+  confetti = confetti.filter(p => {
+    p.x += p.vx; p.y += p.vy; p.rot += p.rotSpeed; p.life--;
+    if (p.life <= 0 || p.y > window.innerHeight + 20) return false;
+    ctx2d.save();
+    ctx2d.translate(p.x, p.y);
+    ctx2d.rotate(p.rot);
+    ctx2d.fillStyle = p.color;
+    ctx2d.globalAlpha = Math.min(1, p.life / 50);
+    ctx2d.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+    ctx2d.restore();
+    return true;
+  });
+}
 
 // --- Input ---
 function initInput() {
   const cc = document.getElementById('world-canvas');
+  let touchStartTime = 0;
+  let lastTouchX = 0, lastTouchY = 0;
+
   document.addEventListener('keydown', e => {
-    if (!state.started) return;
+    if (!state.started || state.countdown > 0) return;
     state.keys[e.code] = true;
     if (e.code === 'Tab') { e.preventDefault(); toggleChart(); }
     if (e.code === 'KeyE' && state.mode === 0) doTakeBearing();
     if (e.code === 'KeyF' && state.mode === 0 && hasFix) chartPlotFix(setStatus, scheduleSave);
     if (e.code === 'KeyZ' && state.mode === 1) chartUndoStroke(setStatus);
     if (e.code === 'Escape' && state.mode === 1) closeChart(m => state.mode = m, setStatus);
-    if (e.code === 'Space' && state.mode === 0) { e.preventDefault(); if (state.onGround) { state.pvely = -12; state.onGround = false; } }
-  });
-  document.addEventListener('keyup', e => { state.keys[e.code] = false; });
-  document.addEventListener('mousedown', e => {
-    if (!state.started || state.mode !== 0) return;
-    state.lastMX = e.clientX; state.lastMY = e.clientY; state.mouseDown = true;
-    if (!state.pointerLocked) cc.requestPointerLock();
-  });
-  document.addEventListener('mousemove', e => {
-    if (state.pointerLocked) state.camAngle += e.movementX * 0.003;
-    else if (state.mouseDown || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches)) {
-      state.camAngle += (e.clientX - state.lastMX) * 0.003; state.lastMX = e.clientX; state.lastMY = e.clientY;
+    if (e.code === 'Space' && state.mode === 0) {
+      e.preventDefault();
+      if (state.onGround) { state.pvely = -12; state.onGround = false; }
     }
   });
-  document.addEventListener('pointerlockchange', () => { state.pointerLocked = !!document.pointerLockElement; });
+  document.addEventListener('keyup', e => { state.keys[e.code] = false; });
+
+  // Mouse: click to lock, then drag to look
+  cc.addEventListener('mousedown', e => {
+    if (!state.started || state.mode !== 0) return;
+    state.lastMX = e.clientX; state.lastMY = e.clientY;
+    if (!state.pointerLocked) {
+      cc.requestPointerLock();
+      document.getElementById('click-to-play').classList.add('hidden');
+      return;
+    }
+    state.mouseDown = true;
+  });
+  document.addEventListener('mousemove', e => {
+    if (state.pointerLocked) {
+      state.camAngle += e.movementX * 0.003;
+    } else if (state.mouseDown) {
+      state.camAngle += (e.clientX - state.lastMX) * 0.003;
+      state.lastMX = e.clientX; state.lastMY = e.clientY;
+    }
+  });
+  document.addEventListener('pointerlockchange', () => {
+    state.pointerLocked = !!document.pointerLockElement;
+    if (state.pointerLocked) document.getElementById('click-to-play').classList.add('hidden');
+  });
   document.addEventListener('mouseup', e => {
-    if (e.button === 0 && state.mode === 0 && state.started) { state.mouseDown = false; doPlaceBeacon(); }
+    if (e.button === 0 && state.mode === 0 && state.started && state.pointerLocked) {
+      state.mouseDown = false;
+      doPlaceBeacon();
+    }
   });
-  // Chart canvas drawing (delegated to chart.js)
-  initChartInput(state);
+
   // Touch support
-  let touchStartX = 0, touchStartY = 0;
-  document.addEventListener('touchstart', e => {
-    if (!state.started || state.mode !== 0) return;
+  cc.addEventListener('touchstart', e => {
+    if (!state.started || state.mode !== 0 || state.countdown > 0) return;
     const t = e.touches[0];
-    touchStartX = t.clientX; touchStartY = t.clientY;
+    lastTouchX = t.clientX; lastTouchY = t.clientY;
+    touchStartTime = Date.now();
   }, { passive: true });
-  document.addEventListener('touchmove', e => {
+  cc.addEventListener('touchmove', e => {
     if (!state.started || state.mode !== 0) return;
     const t = e.touches[0];
-    const dx = t.clientX - touchStartX;
+    const dx = t.clientX - lastTouchX;
     state.camAngle += dx * 0.005;
-    touchStartX = t.clientX; touchStartY = t.clientY;
+    lastTouchX = t.clientX; lastTouchY = t.clientY;
   }, { passive: true });
-  document.addEventListener('touchend', e => {
+  cc.addEventListener('touchend', e => {
     if (!state.started || state.mode !== 0) return;
-    // Tap = beacon placement
-    doPlaceBeacon();
+    // Double-tap = beacon placement
+    const elapsed = Date.now() - touchStartTime;
+    if (elapsed < 200) {
+      // Quick tap — check if not on UI elements
+      const joyEl = document.getElementById('joystick');
+      if (joyEl && joyEl.contains(e.target)) return;
+      doPlaceBeacon();
+    }
   });
-  // Virtual joystick for mobile
+
+  // Virtual joystick
   const joyEl = document.getElementById('joystick');
   if (joyEl) {
-    let joyActive = false, joyX = 0, joyY = 0;
+    let joyActive = false;
     const joyKnob = document.getElementById('joystick-knob');
     joyEl.addEventListener('touchstart', e => { e.preventDefault(); joyActive = true; });
     document.addEventListener('touchmove', e => {
       if (!joyActive) return;
       const t = e.touches[0];
       const rect = joyEl.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-      joyX = Math.max(-1, Math.min(1, (t.clientX - cx) / (rect.width / 2)));
-      joyY = Math.max(-1, Math.min(1, (t.clientY - cy) / (rect.height / 2)));
-      if (joyKnob) {
-        joyKnob.style.transform = `translate(${joyX * 20}px, ${joyY * 20}px)`;
-      }
-      // Map joystick to WASD keys
-      state.keys['KeyW'] = joyY < -0.3;
-      state.keys['KeyS'] = joyY > 0.3;
-      state.keys['KeyA'] = joyX < -0.3;
-      state.keys['KeyD'] = joyX > 0.3;
+      const jcx = rect.left + rect.width / 2, jcy = rect.top + rect.height / 2;
+      const jx = Math.max(-1, Math.min(1, (t.clientX - jcx) / (rect.width / 2)));
+      const jy = Math.max(-1, Math.min(1, (t.clientY - jcy) / (rect.height / 2)));
+      if (joyKnob) joyKnob.style.transform = `translate(${jx * 20}px, ${jy * 20}px)`;
+      state.keys['KeyW'] = jy < -0.3;
+      state.keys['KeyS'] = jy > 0.3;
+      state.keys['KeyA'] = jx < -0.3;
+      state.keys['KeyD'] = jx > 0.3;
     }, { passive: true });
     document.addEventListener('touchend', () => {
-      joyActive = false; joyX = 0; joyY = 0;
+      joyActive = false;
       if (joyKnob) joyKnob.style.transform = '';
       state.keys['KeyW'] = false; state.keys['KeyS'] = false;
       state.keys['KeyA'] = false; state.keys['KeyD'] = false;
     });
   }
+
   // Button bindings
   document.getElementById('btn-undo').onclick = () => chartUndoStroke(setStatus);
   document.getElementById('btn-stamp').onclick = () => chartPlotFix(setStatus, scheduleSave);
-  document.getElementById('btn-publish').onclick = () => chartPublish(state, setStatus, scheduleSave);
+  document.getElementById('btn-publish').onclick = () => {
+    chartPublish(state, setStatus, scheduleSave);
+    spawnConfetti();
+  };
   document.getElementById('btn-export').onclick = doExportChart;
   document.getElementById('btn-import').onclick = doImportChart;
   document.getElementById('btn-export-published').onclick = doExportChart;
-  document.getElementById('btn-start').onclick = () => { initAudio(); startGame(); };
+  document.getElementById('btn-start').onclick = () => { initAudio(); startCountdown(); };
   document.getElementById('btn-new-session').onclick = () => { clearSave(); location.reload(); };
   document.getElementById('btn-audio').onclick = toggleAudio;
+
+  // Mobile buttons
+  const mobileBearing = document.getElementById('btn-mobile-bearing');
+  if (mobileBearing) mobileBearing.onclick = doTakeBearing;
+  const mobileChart = document.getElementById('btn-mobile-chart');
+  if (mobileChart) mobileChart.onclick = () => toggleChart();
+
   // Resume prompt
   const saved = loadGame();
   if (saved && saved.beacons && saved.beacons.length > 0) {
     document.getElementById('resume-prompt').style.display = 'block';
-    document.getElementById('btn-resume').onclick = () => { resumeGame(saved); };
-    document.getElementById('btn-fresh').onclick = () => { clearSave(); startGame(); };
+    document.getElementById('btn-resume').onclick = () => resumeGame(saved);
+    document.getElementById('btn-fresh').onclick = () => { clearSave(); startCountdown(); };
   }
 }
 
-// --- Game actions (DOM-coupled) ---
+// --- Game actions ---
 function doPlaceBeacon() {
   const r = placeBeaconLogic(state.px, state.pz, state.camAngle);
-  setStatus(r.reason || r.name + ' planted.');
+  if (r.ok) {
+    showToast(r.name + ' planted');
+    playBeaconSound();
+    scheduleSave();
+  } else {
+    showToast(r.reason);
+  }
   document.getElementById('beacon-count').textContent = 'Beacons: ' + beaconCount + '/' + MB;
-  if (r.ok) { scheduleSave(); playBeaconSound(); }
 }
 
 function doTakeBearing() {
   const r = takeBearingLogic(state.px, state.pz, state.camAngle);
-  if (!r.ok) { setStatus(r.reason); return; }
-  setStatus('Bearing recorded: ' + r.bearing + ' at ' + r.degrees + '°. Take a second bearing to fix your position.');
-  scheduleSave();
+  if (!r.ok) { showToast(r.reason); return; }
+  showToast('Bearing: ' + r.bearing + ' at ' + r.degrees + '°');
   playBearingSound();
+  scheduleSave();
   if (r.fix) {
-    setStatus('Position fixed! Error: ' + r.fix.err.toFixed(1) + 'm. Press F to plot on your chart, or TAB to open it.');
+    showToast('Position fixed! Error: ' + r.fix.err.toFixed(1) + 'm');
     const fi = document.getElementById('fix-info');
     fi.style.display = 'block';
     fi.textContent = 'Fix: (' + Math.round(r.fix.x) + ', ' + Math.round(r.fix.z) + ') err: ' + r.fix.err.toFixed(1) + 'm';
   }
 }
 
-function doPlotFix() {
-  chartPlotFix(setStatus, scheduleSave);
-}
-
-function doUndoStroke() {
-  chartUndoStroke(setStatus);
-}
-
-function toggleChart() { state.mode === 1 ? closeChart(m => state.mode = m, setStatus) : openChart(m => state.mode = m, setStatus); }
-
-function doPublishChart() {
-  chartPublish(state, setStatus, scheduleSave);
+function toggleChart() {
+  state.mode === 1 ? closeChart(m => state.mode = m, setStatus) : openChart(m => state.mode = m, setStatus);
 }
 
 function doExportChart() {
@@ -215,7 +300,7 @@ function doExportChart() {
   const a = document.createElement('a');
   a.href = url; a.download = 'atlaswright-chart.json'; a.click();
   URL.revokeObjectURL(url);
-  setStatus('Chart exported. Share the file with someone!');
+  showToast('Chart exported');
 }
 
 function doImportChart() {
@@ -229,9 +314,9 @@ function doImportChart() {
       const result = importChartJSON(reader.result, state);
       if (result.ok) {
         openChart(m => state.mode = m, setStatus);
-        setStatus('Chart imported. View it on the chart overlay.');
+        showToast('Chart imported');
       } else {
-        setStatus('Import failed: ' + result.reason);
+        showToast('Import failed: ' + result.reason);
       }
     };
     reader.readAsText(file);
@@ -241,7 +326,6 @@ function doImportChart() {
 
 function resumeGame(data) {
   state.seed = data.seed || 1337;
-  // Rebuild terrain with saved seed
   initNoise(state.seed);
   buildTerrain(state.seed);
   assignLandmarkHeights();
@@ -251,10 +335,45 @@ function resumeGame(data) {
   chart.strokes = data.chart.strokes || [];
   chart.fixes = data.chart.fixes || [];
   chart.published = data.chart.published || false;
-  // Start without re-reading the dropdown (terrain already built)
+  launchGame();
+}
+
+// --- Countdown ---
+function startCountdown() {
+  state.countdown = 3;
+  document.getElementById('start-overlay').classList.add('hidden');
+  const countEl = document.getElementById('countdown');
+  countEl.classList.add('visible');
+  countEl.textContent = '3';
+  const tick = () => {
+    state.countdown--;
+    if (state.countdown > 0) {
+      countEl.textContent = String(state.countdown);
+      setTimeout(tick, 800);
+    } else {
+      countEl.textContent = 'GO!';
+      setTimeout(() => { countEl.classList.remove('visible'); launchGame(); }, 600);
+    }
+  };
+  setTimeout(tick, 800);
+}
+
+function launchGame() {
   state.started = true;
   state.startTime = Date.now();
-  document.getElementById('start-overlay').classList.add('hidden');
+  const regionSelect = document.getElementById('region-select');
+  const regionSeed = regionSelect ? parseInt(regionSelect.value) : 1337;
+  state.seed = regionSeed;
+  const goalInput = document.getElementById('personal-goal');
+  state.personalGoal = goalInput ? goalInput.value.trim() : '';
+  initNoise(regionSeed);
+  buildTerrain(regionSeed);
+  assignLandmarkHeights();
+  state.px = WORLD / 2; state.pz = WORLD / 2;
+  let h = heightAt(state.px, state.pz);
+  while (h <= 1 && state.px < WORLD - 10) { state.px += 5; h = heightAt(state.px, state.pz); }
+  revealFog(state.px, state.pz, SR);
+  document.getElementById('click-to-play').classList.remove('hidden');
   if (window.matchMedia && !window.matchMedia('(pointer:coarse)').matches) {
     document.getElementById('world-canvas').requestPointerLock();
   }
@@ -264,92 +383,117 @@ function resumeGame(data) {
 
 // --- Update ---
 function update(delta) {
-  if (state.mode !== 0 || !state.started) return;
+  if (state.mode !== 0 || !state.started || state.countdown > 0) return;
+
   const isTouch = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
-  if (!isTouch && !document.pointerLockElement) { state.pvelx = 0; return; }
-  const speed = (state.keys['ShiftLeft'] || state.keys['ShiftRight']) ? 7 : 4;
+  const hasKeyboard = Object.values(state.keys).some(v => v);
+
+  // Allow movement without pointer lock if keyboard is used (fallback)
+  if (!isTouch && !state.pointerLocked && !hasKeyboard) { state.pvelx = 0; state.velZ = 0; return; }
+
+  const sprinting = (state.keys['ShiftLeft'] || state.keys['ShiftRight']) && stamina > 0;
+  const speed = sprinting ? 7 : 4;
+
+  // Sprint stamina
+  if (sprinting && (state.keys['KeyW'] || state.keys['KeyS'] || state.keys['KeyA'] || state.keys['KeyD'])) {
+    stamina = Math.max(0, stamina - 30 * delta);
+  } else {
+    stamina = Math.min(100, stamina + 15 * delta);
+  }
+
   let mx = 0, mz = 0;
   if (state.keys['KeyW']) { mx += Math.sin(state.camAngle); mz += Math.cos(state.camAngle); }
   if (state.keys['KeyS']) { mx -= Math.sin(state.camAngle); mz -= Math.cos(state.camAngle); }
   if (state.keys['KeyA']) { mx += Math.cos(state.camAngle); mz -= Math.sin(state.camAngle); }
   if (state.keys['KeyD']) { mx -= Math.cos(state.camAngle); mz += Math.sin(state.camAngle); }
   const len = Math.sqrt(mx * mx + mz * mz);
-  if (len > 0) { mx /= len; mz /= len; }
+  if (len > 0) { mx /= len; mz /= len; showMoveFlash(); }
+
   state.pvelx = mx * speed;
+  state.velZ = mz * speed;
+
+  // Gravity (separate from walking)
   state.pvely += 20 * delta;
   if (state.pvely > 15) state.pvely = 15;
+
+  // Move X
   const nx = state.px + state.pvelx * delta;
-  const nz = state.pz + state.pvely * delta;
-  const nh = heightAt(nx, nz);
-  const ph = heightAt(state.px, state.pz);
+  const nhx = heightAt(nx, state.pz);
+  const phx = heightAt(state.px, state.pz);
+  if (nhx > 0 && nhx - phx < 4) { state.px = nx; }
+  else if (nhx > 0 && nhx - phx >= 4) { /* blocked by steep slope */ }
+
+  // Move Z (walking direction, separate from gravity)
+  const nz = state.pz + state.velZ * delta;
+  const nhz = heightAt(state.px, nz);
+  const phz = heightAt(state.px, state.pz);
+  if (nhz > 0 && nhz - phz < 4) { state.pz = nz; }
+
+  // Vertical movement (jump/gravity)
+  const ny = state.pz; // for now, vertical is ground-only
+  const nh = heightAt(state.px, state.pz);
   if (nh <= 0) { state.pvely = 0; }
-  else if (nh - ph < 2) { state.pz = nz; state.px = nx; state.onGround = Math.abs(nh - ph) < 0.5; }
-  else { state.pvely = 0; }
-  if (state.pvely === 0 && nh > 0) state.onGround = true;
+  else if (state.pvely < 0 && heightAt(state.px, state.pz) > 0) {
+    // Jumping up — allow
+  }
+  state.onGround = nh > 0;
+
   state.px = Math.max(1, Math.min(WORLD - 2, state.px));
   state.pz = Math.max(1, Math.min(WORLD - 2, state.pz));
+
   revealFog(state.px, state.pz, SR);
+
+  // Camera bob when walking
+  if (len > 0) {
+    bobPhase += delta * 8;
+  } else {
+    bobPhase *= 0.9; // ease out
+  }
+
   _exploredTimer += delta;
   if (_exploredTimer >= 1) { _exploredTimer = 0; state.exploredPct = calcExplored(); scheduleSave(); }
 }
 
 // --- Game loop ---
 function gameLoop(ts) {
-  if (!state.lastTS) state.lastTS = ts;
-  state.dt = Math.min((ts - state.lastTS) / 1000, 0.05);
-  state.lastTS = ts;
-  update(state.dt);
-  if (state.mode === 0) renderFrame(state);
-  requestAnimationFrame(gameLoop);
-}
-
-function startGame() {
-  state.started = true;
-  state.startTime = Date.now();
-  // Capture region and personal goal from Atelier
-  const regionSelect = document.getElementById('region-select');
-  const regionSeed = regionSelect ? parseInt(regionSelect.value) : 1337;
-  state.seed = regionSeed;
-  const goalInput = document.getElementById('personal-goal');
-  state.personalGoal = goalInput ? goalInput.value.trim() : '';
-  // Build terrain with selected seed
-  initNoise(regionSeed);
-  buildTerrain(regionSeed);
-  assignLandmarkHeights();
-  // Spawn on dry ground
-  state.px = WORLD / 2; state.pz = WORLD / 2;
-  let h = heightAt(state.px, state.pz);
-  while (h <= 1 && state.px < WORLD - 10) { state.px += 5; h = heightAt(state.px, state.pz); }
-  revealFog(state.px, state.pz, SR);
-  document.getElementById('start-overlay').classList.add('hidden');
-  // Pointer lock only on desktop (not touch devices)
-  if (window.matchMedia && !window.matchMedia('(pointer:coarse)').matches) {
-    document.getElementById('world-canvas').requestPointerLock();
+  try {
+    if (!state.lastTS) state.lastTS = ts;
+    state.dt = Math.min((ts - state.lastTS) / 1000, 0.05);
+    state.lastTS = ts;
+    update(state.dt);
+    if (state.mode === 0 && state.started) {
+      const bobOffset = Math.sin(bobPhase) * 2;
+      renderFrame(state, stamina, bobOffset);
+    }
+    // Confetti overlay
+    if (confetti.length > 0) {
+      const c = document.getElementById('world-canvas');
+      if (c) drawConfetti(c.getContext('2d'));
+    }
+  } catch (e) {
+    console.error('Game loop error:', e);
   }
-  const hint = document.getElementById('first-hint');
-  if (hint) { hint.classList.add('visible'); setTimeout(() => hint.classList.remove('visible'), 6000); }
-  // Mobile button handlers
-  const mobileBearing = document.getElementById('btn-mobile-bearing');
-  if (mobileBearing) mobileBearing.onclick = doTakeBearing;
-  const mobileChart = document.getElementById('btn-mobile-chart');
-  if (mobileChart) mobileChart.onclick = () => toggleChart();
+  requestAnimationFrame(gameLoop);
 }
 
 // --- Init ---
 window.addEventListener('DOMContentLoaded', () => {
-  initRender(document.getElementById('world-canvas'), document.getElementById('minimap'));
-  initChart(document.getElementById('chart-canvas'));
-
-  initNoise(1337);
-  buildTerrain(1337);
-  assignLandmarkHeights();
-  initInput();
-
-  // Spawn on dry ground
-  state.px = WORLD / 2; state.pz = WORLD / 2;
-  let h = heightAt(state.px, state.pz);
-  while (h <= 1 && state.px < WORLD - 10) { state.px += 5; h = heightAt(state.px, state.pz); }
-  revealFog(state.px, state.pz, SR);
-  renderFrame(state);
-  requestAnimationFrame(gameLoop);
+  try {
+    const worldCanvas = document.getElementById('world-canvas');
+    const minimapEl = document.getElementById('minimap');
+    initRender(worldCanvas, minimapEl);
+    initChart(document.getElementById('chart-canvas'));
+    initInput();
+    initNoise(1337);
+    buildTerrain(1337);
+    assignLandmarkHeights();
+    state.px = WORLD / 2; state.pz = WORLD / 2;
+    let h = heightAt(state.px, state.pz);
+    while (h <= 1 && state.px < WORLD - 10) { state.px += 5; h = heightAt(state.px, state.pz); }
+    revealFog(state.px, state.pz, SR);
+    renderFrame(state, 100, 0);
+    requestAnimationFrame(gameLoop);
+  } catch (e) {
+    console.error('ATLASWRIGHT init failed:', e);
+  }
 });

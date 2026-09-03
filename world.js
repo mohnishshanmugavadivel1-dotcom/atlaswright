@@ -7,7 +7,7 @@ export const WORLD = 1024, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG 
 // --- Terrain ---
 const heightMap = new Float32Array(WORLD * WORLD);
 export const colorMap = new Uint8Array(WORLD * WORLD * 3);
-export const fogMap = new Uint8Array(WORLD * WORLD);
+export const fogMap = new Uint8Array(WORLD * WORLD); // 0=hidden, 1=revealed, 2=semi-revealed
 export let fogVersion = 0;
 
 export function heightAt(x, z) {
@@ -35,10 +35,8 @@ export function buildTerrain(seed) {
     const dx = x - WORLD / 2, dz = z - WORLD / 2, r = Math.sqrt(dx * dx + dz * dz) / (WORLD / 2);
     const mask = 1 - Math.max(0, Math.min(1, (r - 0.5) / 0.52));
     let h = Math.pow(Math.max(0, n * 0.5 + 0.5), 0.7) * 30 * mask - 3;
-    // Ridge: add a raised line across the island
     const ridgeDist = Math.abs((x - 300) * 0.3 + (z - 600) * 0.1);
     if (h > 0 && ridgeDist < 15) h += (1 - ridgeDist / 15) * 8;
-    // Inlet: carve a water channel from the east
     const inletDist = Math.abs(z - 512);
     if (x > 600 && x < 800 && inletDist < 20 + (x - 600) * 0.3) {
       const carved = 1 - Math.max(0, 1 - inletDist / (20 + (x - 600) * 0.3));
@@ -52,19 +50,36 @@ export function buildTerrain(seed) {
   }
 }
 
-// --- Fog of war ---
+// --- Fog of war with smooth edges ---
 export function revealFog(wx, wz, radius) {
   const cx = Math.floor(wx), cz = Math.floor(wz), rr = Math.ceil(radius);
   for (let z = cz - rr; z <= cz + rr; z++) for (let x = cx - rr; x <= cx + rr; x++) {
     if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) continue;
     const dx = x - cx, dz = z - cz;
-    if (dx * dx + dz * dz <= radius * radius && !fogMap[z * WORLD + x]) { fogMap[z * WORLD + x] = 1; fogVersion++; }
+    if (dx * dx + dz * dz <= radius * radius && fogMap[z * WORLD + x] === 0) {
+      fogMap[z * WORLD + x] = 1; fogVersion++;
+    }
+  }
+  // Smooth edges: mark adjacent-to-revealed as semi-revealed (2)
+  for (let z = Math.max(0, cz - rr - 1); z <= Math.min(WORLD - 1, cz + rr + 1); z++) {
+    for (let x = Math.max(0, cx - rr - 1); x <= Math.min(WORLD - 1, cx + rr + 1); x++) {
+      if (fogMap[z * WORLD + x] !== 0) continue;
+      // Check if any neighbor is revealed
+      let hasRevealedNeighbor = false;
+      for (const [ox, oz] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nx2 = x + ox, nz2 = z + oz;
+        if (nx2 >= 0 && nz2 >= 0 && nx2 < WORLD && nz2 < WORLD && fogMap[nz2 * WORLD + nx2] === 1) {
+          hasRevealedNeighbor = true; break;
+        }
+      }
+      if (hasRevealedNeighbor) { fogMap[z * WORLD + x] = 2; fogVersion++; }
+    }
   }
 }
 
 export function calcExplored() {
   let c = 0;
-  for (let i = 0; i < fogMap.length; i++) if (fogMap[i]) c++;
+  for (let i = 0; i < fogMap.length; i++) if (fogMap[i] === 1) c++;
   return (c / fogMap.length * 100).toFixed(1);
 }
 
@@ -85,7 +100,6 @@ export function assignLandmarkHeights() {
 export const beacons = [];
 export let beaconCount = 0;
 
-// Returns { ok: true, name } or { ok: false, reason }
 export function placeBeacon(px, pz, camAngle) {
   if (beaconCount >= MB) return { ok: false, reason: 'Maximum beacons placed (' + MB + '/' + MB + '). Open your chart to publish.' };
   const wx = px + Math.sin(camAngle) * 10;
@@ -132,7 +146,6 @@ export function isAligned(px, pz, camAngle, bearingsList) {
   return angDiff(camAngle, trueB) <= ALG;
 }
 
-// Returns { ok, reason?, bearing?, fix? }
 export function takeBearing(px, pz, camAngle) {
   const tx = findNearestTarget(px, pz, camAngle, bearings);
   if (!tx) return { ok: false, reason: 'No targets in range. Move closer to a cairn or beacon.' };
@@ -145,7 +158,6 @@ export function takeBearing(px, pz, camAngle) {
   return { ok: true, bearing: tx.name, degrees: Math.round(camAngle * 180 / Math.PI), fix };
 }
 
-// Returns null or { x, z, err, spread }
 function tryFix(px, pz) {
   let a = null, b = null;
   for (let i = bearings.length - 1; i >= 0; i--) {
@@ -165,20 +177,17 @@ function tryFix(px, pz) {
   const o2x = b.x - u2x * t2, o2z = b.z - u2z * t2;
   const fix = { x: (o1x + o2x) / 2, z: (o1z + o2z) / 2 };
   const err = Math.sqrt((fix.x - px) ** 2 + (fix.z - pz) ** 2);
-  const spread = Math.sqrt((o1x - o2x) ** 2 + (o1z - o2z) ** 2);
   lastFix = fix; hasFix = true;
   bearings.length = 0;
-  return { x: fix.x, z: fix.z, err, spread };
+  return { x: fix.x, z: fix.z, err };
 }
 
-// Reset all game state
 export function resetWorld() {
   fogMap.fill(0); fogVersion = 0;
   beacons.length = 0; beaconCount = 0;
   bearings.length = 0; lastFix = null; hasFix = false;
 }
 
-// Restore saved state (for persistence)
 export function restoreState(data) {
   beacons.length = 0;
   data.beacons.forEach(b => beacons.push(b));

@@ -10,7 +10,7 @@
 <style>:root{--bg:#12100c;--bg-deep:#0a0a08;--surface:rgba(18,16,12,0.88);--surface-deep:rgba(18,16,12,0.92);--parchment:#ede8df;--parchment-mid:#e4dece;--brass:#c08030;--amber:#e8a840;--ink-dark:#1f1c18;--ink-mid:#5a4a30;--ink-light:#b8a878;--ink-muted:#8a7a60;--success:#3a6830;--success-hover:#4a8040;--font-display:"Instrument Serif",Georgia,serif;--font-body:"Source Sans 3","Segoe UI",sans-serif;--font-data:"JetBrains Mono","Consolas",monospace;--sp-xs:4px;--sp-sm:8px;--sp-md:12px;--sp-lg:16px;--sp-xl:24px;--sp-2xl:32px}
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg-deep);color:var(--parchment);font-family:var(--font-body);overflow:hidden;width:100vw;height:100vh}
-body::after{content:"";position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;opacity:.04;z-index:1000;background-image:url( + grain_svg + )}
+body::after{content:"";position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;opacity:.04;z-index:1000;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E")}
 canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
 #hud{position:absolute;top:0;left:0;right:0;padding:var(--sp-md) var(--sp-lg);display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10}
 #hud>*{pointer-events:auto}
@@ -39,8 +39,8 @@ canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
 #publish-card{background:var(--parchment);border:3px solid var(--ink-dark);padding:30px 50px;text-align:center}
 #publish-card h2{font-family:var(--font-display);font-size:24px;color:var(--ink-dark);margin-bottom:var(--sp-lg);letter-spacing:2px;text-transform:uppercase}
 #publish-card p{font-family:var(--font-body);font-size:14px;color:var(--ink-mid);margin-bottom:var(--sp-md)}
-#publish-card .published-text{font-family:var(--font-display);font-size:48px;color:var(--success);font-weight:400;letter-spacing:4px;opacity:0;transition:opacity .8s}
-#publish-card .published-text.visible{opacity:1}
+#publish-card .published-text{font-family:var(--font-display);font-size:48px;color:var(--success);font-weight:400;letter-spacing:4px;opacity:0;transition:opacity .8s,transform .8s;transform:scale(0.5)}
+#publish-card .published-text.visible{opacity:1;transform:scale(1)}
 #publish-card button{margin-top:var(--sp-lg);padding:var(--sp-sm) var(--sp-xl);border:1px solid var(--ink-mid);background:var(--brass);color:#fff;font-family:var(--font-body);font-size:14px;cursor:pointer;border-radius:2px}
 #publish-card button:hover{background:#d4922e}
 #start-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(18,16,12,.95);z-index:40;display:flex;justify-content:center;align-items:center}
@@ -57,6 +57,16 @@ canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
 #first-hint.visible{opacity:1}
 #first-hint strong{color:var(--brass)}
 #status-bar{transition:opacity .3s}
+#click-to-play{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:25;display:flex;justify-content:center;align-items:center;cursor:pointer}
+#click-to-play.hidden{display:none}
+#click-to-play .ctp-text{font-family:var(--font-display);font-size:28px;color:var(--brass);letter-spacing:3px;text-shadow:0 2px 8px rgba(0,0,0,0.8);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(1.05)}}
+#countdown{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:var(--font-display);font-size:80px;color:var(--brass);text-shadow:0 4px 20px rgba(0,0,0,0.8);z-index:45;opacity:0;pointer-events:none;transition:opacity .3s}
+#countdown.visible{opacity:1}
+#toast{position:absolute;bottom:60px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--brass);padding:8px 20px;font-family:var(--font-body);font-size:13px;color:var(--parchment);border-radius:4px;z-index:15;opacity:0;transition:opacity .4s;pointer-events:none}
+#toast.visible{opacity:1}
+#move-flash{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:var(--font-body);font-size:16px;color:#4a8040;text-shadow:0 2px 8px rgba(0,0,0,0.5);z-index:15;opacity:0;pointer-events:none;transition:opacity .5s}
+#move-flash.visible{opacity:1}
 @media (pointer:coarse){#joystick,#mobile-actions{display:block!important}}
 </style>
 </head>
@@ -74,20 +84,19 @@ canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
 <button id="btn-audio" style="background:var(--surface);border:1px solid var(--ink-mid);color:var(--parchment);font-size:16px;padding:4px 8px;cursor:pointer;border-radius:3px;pointer-events:auto">🔊</button>
 </div>
 </div>
-<div id="instructions">
-WASD move | Mouse drag look | Shift run | Space jump<br>
-Left Click plant beacon | E take bearing | F plot fix on chart<br>
-TAB open chart | Z undo | ESC close chart | Right Click release mouse
-</div>
 <div id="first-hint"><strong>Find the triangles</strong> on the map — those are cairns.<br>Walk toward one, aim your crosshair at it, and press <strong>E</strong> to take a bearing.</div>
 <div id="status-bar">Explore the island. Find landmarks. Take bearings. Draw your chart.</div>
+<div id="click-to-play" class="hidden"><div class="ctp-text">CLICK TO PLAY</div></div>
+<div id="countdown"></div>
+<div id="toast"></div>
+<div id="move-flash">YOU'RE MOVING!</div>
 <!-- Virtual joystick for mobile -->
 <div id="joystick" style="display:none;position:absolute;bottom:80px;left:30px;width:80px;height:80px;border-radius:50%;background:rgba(18,16,12,0.6);border:2px solid var(--ink-mid);z-index:15;touch-action:none">
 <div id="joystick-knob" style="position:absolute;top:50%;left:50%;width:30px;height:30px;border-radius:50%;background:var(--brass);transform:translate(-50%,-50%);opacity:0.7"></div>
 </div>
 <!-- Mobile action buttons -->
 <div id="mobile-actions" style="display:none;position:absolute;bottom:80px;right:30px;z-index:15;gap:8px">
-<button id="btn-mobile-bearing" style="width:50px;height:50px;border-radius:50%;background:var(--surface);border:2px solid var(--brass);color:var(--brass);font-size:18px;cursor:pointer">E</button>
+<button id="btn-mobile-bearing" style="width:60px;height:60px;border-radius:50%;background:var(--surface);border:2px solid var(--brass);color:var(--brass);font-size:14px;cursor:pointer;font-family:var(--font-body)">E</button>
 <button id="btn-mobile-chart" style="width:50px;height:50px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-mid);color:var(--parchment);font-size:14px;cursor:pointer">📋</button>
 </div>
 <div id="chart-overlay">
