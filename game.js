@@ -145,8 +145,9 @@ function initInput() {
   document.getElementById('btn-export').onclick = doExportChart;
   document.getElementById('btn-import').onclick = doImportChart;
   document.getElementById('btn-export-published').onclick = doExportChart;
-  document.getElementById('btn-start').onclick = startGame;
+  document.getElementById('btn-start').onclick = () => { initAudio(); startGame(); };
   document.getElementById('btn-new-session').onclick = () => { clearSave(); location.reload(); };
+  document.getElementById('btn-audio').onclick = toggleAudio;
   // Resume prompt
   const saved = loadGame();
   if (saved && saved.beacons && saved.beacons.length > 0) {
@@ -161,7 +162,7 @@ function doPlaceBeacon() {
   const r = placeBeaconLogic(state.px, state.pz, state.camAngle);
   setStatus(r.reason || r.name + ' planted.');
   document.getElementById('beacon-count').textContent = 'Beacons: ' + beaconCount + '/' + MB;
-  if (r.ok) scheduleSave();
+  if (r.ok) { scheduleSave(); playBeaconSound(); }
 }
 
 function doTakeBearing() {
@@ -169,6 +170,7 @@ function doTakeBearing() {
   if (!r.ok) { setStatus(r.reason); return; }
   setStatus('Bearing recorded: ' + r.bearing + ' at ' + r.degrees + '°. Take a second bearing to fix your position.');
   scheduleSave();
+  playBearingSound();
   if (r.fix) {
     setStatus('Position fixed! Error: ' + r.fix.err.toFixed(1) + 'm. Press F to plot on your chart, or TAB to open it.');
     const fi = document.getElementById('fix-info');
@@ -213,8 +215,22 @@ function toggleChart() { state.mode === 1 ? closeChart() : openChart(); }
 function drawChart() {
   if (!chartCtx) return;
   const cw = chartCanvas.width, ch = chartCanvas.height, ext = 260;
+  // Paper base
   chartCtx.fillStyle = '#ede8df';
   chartCtx.fillRect(0, 0, cw, ch);
+  // Paper grain texture
+  const grainSeed = 12345;
+  let gr = grainSeed;
+  for (let i = 0; i < 2000; i++) {
+    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
+    const gx = (gr % cw);
+    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
+    const gy = (gr % ch);
+    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
+    const alpha = 0.02 + (gr % 30) * 0.001;
+    chartCtx.fillStyle = `rgba(160,140,100,${alpha})`;
+    chartCtx.fillRect(gx, gy, 1, 1);
+  }
   // Hint when empty
   if (chart.strokes.length === 0 && chart.fixes.length === 0) {
     chartCtx.fillStyle = 'rgba(90,74,48,0.25)';
@@ -241,19 +257,19 @@ function drawChart() {
   chartCtx.beginPath(); chartCtx.moveTo(0, az); chartCtx.lineTo(cw, az); chartCtx.stroke();
   // Border
   chartCtx.strokeStyle = '#1f1c18'; chartCtx.lineWidth = 2; chartCtx.strokeRect(1, 1, cw - 2, ch - 2);
-  // Strokes
-  chartCtx.strokeStyle = '#1f1c18'; chartCtx.lineWidth = 2; chartCtx.lineCap = 'round'; chartCtx.lineJoin = 'round';
-  chart.strokes.forEach(s => {
-    if (s.length < 2) return;
-    chartCtx.beginPath(); chartCtx.moveTo(s[0].x, s[0].y);
-    for (let i = 1; i < s.length; i++) chartCtx.lineTo(s[i].x, s[i].y);
-    chartCtx.stroke();
-  });
-  if (chart.currentStroke.length > 1) {
-    chartCtx.beginPath(); chartCtx.moveTo(chart.currentStroke[0].x, chart.currentStroke[0].y);
-    for (let i = 1; i < chart.currentStroke.length; i++) chartCtx.lineTo(chart.currentStroke[i].x, chart.currentStroke[i].y);
-    chartCtx.stroke();
+  // Strokes with ink bleed variation
+  chartCtx.lineCap = 'round'; chartCtx.lineJoin = 'round';
+  function drawInkStroke(pts) {
+    if (pts.length < 2) return;
+    for (let i = 1; i < pts.length; i++) {
+      const w = 1.5 + Math.sin(i * 0.3) * 0.5 + Math.random() * 0.3;
+      chartCtx.strokeStyle = `rgba(31,28,24,${0.7 + Math.random() * 0.3})`;
+      chartCtx.lineWidth = w;
+      chartCtx.beginPath(); chartCtx.moveTo(pts[i - 1].x, pts[i - 1].y); chartCtx.lineTo(pts[i].x, pts[i].y); chartCtx.stroke();
+    }
   }
+  chart.strokes.forEach(drawInkStroke);
+  drawInkStroke(chart.currentStroke);
   // Fixes
   chart.fixes.forEach(fx => {
     chartCtx.strokeStyle = 'rgba(180,40,30,0.85)'; chartCtx.lineWidth = 1.5;
@@ -272,6 +288,7 @@ function drawChart() {
 function doPublishChart() {
   chart.published = true;
   document.getElementById('publish-overlay').classList.add('visible');
+  playPublishSound();
   // Expedition summary
   document.getElementById('publish-stats').innerHTML =
     '<strong>Beacons placed:</strong> ' + beaconCount + '<br>' +
@@ -431,6 +448,14 @@ function render() {
     ctx.beginPath(); ctx.moveTo(fs.x - 8, fs.z - 8); ctx.lineTo(fs.x + 8, fs.z + 8);
     ctx.moveTo(fs.x + 8, fs.z - 8); ctx.lineTo(fs.x - 8, fs.z + 8); ctx.stroke();
   }
+  // Atmosphere: subtle cloud shadows
+  const cloudT = Date.now() * 0.0001;
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  for (let i = 0; i < 3; i++) {
+    const cx = cW * (0.3 + 0.4 * Math.sin(cloudT + i * 2.1));
+    const cy = cH * (0.3 + 0.3 * Math.cos(cloudT * 0.7 + i * 1.7));
+    ctx.beginPath(); ctx.arc(cx, cy, 120 + i * 40, 0, Math.PI * 2); ctx.fill();
+  }
   // Compass
   const deg = Math.round((state.camAngle * 180 / Math.PI + 360) % 360);
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -507,6 +532,73 @@ function startGame() {
   document.getElementById('world-canvas').requestPointerLock();
   const hint = document.getElementById('first-hint');
   if (hint) { hint.classList.add('visible'); setTimeout(() => hint.classList.remove('visible'), 6000); }
+}
+
+// --- Audio ---
+let audioCtx = null, masterGain = null, ambientGain = null;
+let audioStarted = false, audioMuted = false;
+
+function initAudio() {
+  if (audioStarted) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.3;
+    masterGain.connect(audioCtx.destination);
+    ambientGain = audioCtx.createGain();
+    ambientGain.gain.value = 0.15;
+    ambientGain.connect(masterGain);
+    // Wind: filtered white noise
+    const windBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+    const windData = windBuf.getChannelData(0);
+    for (let i = 0; i < windData.length; i++) windData[i] = Math.random() * 2 - 1;
+    const windSrc = audioCtx.createBufferSource();
+    windSrc.buffer = windBuf; windSrc.loop = true;
+    const windFilter = audioCtx.createBiquadFilter();
+    windFilter.type = 'lowpass'; windFilter.frequency.value = 400; windFilter.Q.value = 0.5;
+    const windGain = audioCtx.createGain(); windGain.gain.value = 0.4;
+    windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(ambientGain);
+    windSrc.start();
+    // Water: modulated noise
+    const waterBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 3, audioCtx.sampleRate);
+    const waterData = waterBuf.getChannelData(0);
+    for (let i = 0; i < waterData.length; i++) waterData[i] = Math.random() * 2 - 1;
+    const waterSrc = audioCtx.createBufferSource();
+    waterSrc.buffer = waterBuf; waterSrc.loop = true;
+    const waterFilter = audioCtx.createBiquadFilter();
+    waterFilter.type = 'bandpass'; waterFilter.frequency.value = 800; waterFilter.Q.value = 2;
+    const waterGain = audioCtx.createGain(); waterGain.gain.value = 0.15;
+    waterSrc.connect(waterFilter); waterFilter.connect(waterGain); waterGain.connect(ambientGain);
+    waterSrc.start();
+    // Ambient tone: low drone
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine'; osc.frequency.value = 55;
+    const oscGain = audioCtx.createGain(); oscGain.gain.value = 0.06;
+    osc.connect(oscGain); oscGain.connect(ambientGain);
+    osc.start();
+    audioStarted = true;
+  } catch (e) { /* Web Audio not available */ }
+}
+
+function playTone(freq, duration, vol = 0.2, type = 'sine') {
+  if (!audioCtx || audioMuted) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.connect(gain); gain.connect(masterGain);
+  osc.start(); osc.stop(audioCtx.currentTime + duration);
+}
+
+function playBeaconSound() { playTone(880, 0.08, 0.15, 'square'); setTimeout(() => playTone(1100, 0.06, 0.1, 'square'), 60); }
+function playBearingSound() { playTone(660, 0.15, 0.12); setTimeout(() => playTone(880, 0.2, 0.1), 100); }
+function playPublishSound() { [440, 554, 660, 880].forEach((f, i) => setTimeout(() => playTone(f, 0.3, 0.08), i * 120)); }
+
+function toggleAudio() {
+  audioMuted = !audioMuted;
+  if (masterGain) masterGain.gain.value = audioMuted ? 0 : 0.3;
+  document.getElementById('btn-audio').textContent = audioMuted ? '🔇' : '🔊';
 }
 
 // --- Init ---
