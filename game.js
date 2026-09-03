@@ -16,6 +16,7 @@ const state = {
   camAngle: 0, dt: 0, lastTS: 0,
   keys: {}, mouseDown: false, lastMX: 0, lastMY: 0, pointerLocked: false,
   onGround: false, exploredPct: 0,
+  startTime: 0, personalGoal: '',
 };
 
 // --- DOM refs ---
@@ -271,9 +272,26 @@ function drawChart() {
 function doPublishChart() {
   chart.published = true;
   document.getElementById('publish-overlay').classList.add('visible');
-  document.getElementById('publish-stats').textContent =
-    'Beacons: ' + beaconCount + ' | Fixes: ' + chart.fixes.length +
-    ' | Strokes: ' + chart.strokes.length + ' | Explored: ' + calcExplored() + '%';
+  // Expedition summary
+  document.getElementById('publish-stats').innerHTML =
+    '<strong>Beacons placed:</strong> ' + beaconCount + '<br>' +
+    '<strong>Fixes computed:</strong> ' + chart.fixes.length + '<br>' +
+    '<strong>Chart strokes:</strong> ' + chart.strokes.length + '<br>' +
+    '<strong>Terrain explored:</strong> ' + calcExplored() + '%';
+  // Time summary
+  if (state.startTime) {
+    const elapsed = Math.round((Date.now() - state.startTime) / 1000);
+    const min = Math.floor(elapsed / 60);
+    const sec = elapsed % 60;
+    document.getElementById('publish-time').textContent =
+      'Expedition duration: ' + min + 'm ' + sec + 's';
+  }
+  // Personal goal
+  const goalEl = document.getElementById('publish-goal');
+  if (state.personalGoal) {
+    goalEl.style.display = 'block';
+    goalEl.textContent = 'Your goal: ' + state.personalGoal;
+  }
   setTimeout(() => { document.getElementById('published-text').classList.add('visible'); }, 500);
   scheduleSave();
 }
@@ -481,6 +499,10 @@ function gameLoop(ts) {
 
 function startGame() {
   state.started = true;
+  state.startTime = Date.now();
+  // Capture personal goal from Atelier
+  const goalInput = document.getElementById('personal-goal');
+  state.personalGoal = goalInput ? goalInput.value.trim() : '';
   document.getElementById('start-overlay').classList.add('hidden');
   document.getElementById('world-canvas').requestPointerLock();
   const hint = document.getElementById('first-hint');

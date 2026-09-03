@@ -99,11 +99,17 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 </div>
 <div id="publish-overlay">
 <div id="publish-card">
-<h2>Chart Published</h2>
+<h2>Return &amp; Publish</h2>
+<div id="publish-summary" style="text-align:left;margin:var(--sp-lg) 0;font-family:var(--font-body);font-size:13px;color:var(--ink-mid);line-height:1.8">
+<div id="publish-goal" style="display:none;padding:var(--sp-sm);border-left:3px solid var(--brass);margin-bottom:var(--sp-md);color:var(--ink-light);font-style:italic"></div>
 <p id="publish-stats"></p>
+<p id="publish-time" style="color:var(--ink-muted);font-size:12px"></p>
+</div>
 <div class="published-text" id="published-text">PUBLISHED</div>
+<div style="display:flex;gap:var(--sp-sm);justify-content:center;margin-top:var(--sp-lg)">
 <button id="btn-export-published">Export Chart</button>
 <button id="btn-new-session">Start New Expedition</button>
+</div>
 </div>
 </div>
 <div id="start-overlay">
@@ -115,6 +121,23 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 <div style="display:flex;gap:var(--sp-sm);justify-content:center">
 <button id="btn-resume" style="padding:var(--sp-sm) var(--sp-lg);border:1px solid var(--brass);background:var(--brass);color:#fff;font-family:var(--font-body);font-size:13px;cursor:pointer;border-radius:2px">Resume</button>
 <button id="btn-fresh" style="padding:var(--sp-sm) var(--sp-lg);border:1px solid var(--ink-mid);background:transparent;color:var(--ink-light);font-family:var(--font-body);font-size:13px;cursor:pointer;border-radius:2px">Start Fresh</button>
+</div>
+</div>
+<!-- Atelier preparation -->
+<div class="controls" style="margin-bottom:var(--sp-lg)">
+<strong>The Atelier</strong><br>
+<span style="color:var(--ink-light);font-size:11px">Prepare your instruments before heading out.</span>
+</div>
+<div id="atelier-panel" style="text-align:left;margin-bottom:var(--sp-xl);padding:var(--sp-md);border:1px solid var(--ink-mid);border-radius:4px;background:rgba(18,16,12,0.5)">
+<div style="font-family:var(--font-body);font-size:13px;color:var(--ink-light);margin-bottom:var(--sp-sm)">
+<strong style="color:var(--brass)">Region:</strong> Island Grid 1337 &middot; 1024m &times; 1024m
+</div>
+<div style="font-family:var(--font-body);font-size:13px;color:var(--ink-light);margin-bottom:var(--sp-sm)">
+<strong style="color:var(--brass)">Instruments:</strong> Compass &middot; Chart &middot; 24 Beacons
+</div>
+<div style="margin-top:var(--sp-sm)">
+<label style="font-family:var(--font-body);font-size:12px;color:var(--ink-muted);display:block;margin-bottom:var(--sp-xs)">Personal goal (optional)</label>
+<input id="personal-goal" type="text" placeholder="e.g. Map the northern ridge" style="width:100%;padding:var(--sp-sm);border:1px solid var(--ink-mid);border-radius:2px;background:rgba(18,16,12,0.8);color:var(--parchment);font-family:var(--font-body);font-size:13px">
 </div>
 </div>
 <div class="controls">
