@@ -1,4 +1,38 @@
+# Freebuff
 .freebuff/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editors
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+
+# Vercel
+.vercel/
+
+# Logs
 *.log
 *.err
-node_modules/
+
+# Build artifacts
+dist/
+build/
+
+# Game artifacts (not part of the game)
+design-preview.html
+council-report-*.html
+council-transcript-*.md
+atlaswright-status.html

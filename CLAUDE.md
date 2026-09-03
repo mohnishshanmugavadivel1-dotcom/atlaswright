@@ -8,7 +8,7 @@ Browser-based cartography survey game. Reward-free survey loop: explore, take be
 - `noise.js` — seeded simplex noise + fbm (pure math, 42 lines)
 - `world.js` — terrain, fog, landmarks, beacons, bearings, resection (pure logic, zero DOM, 167 lines)
 - `game.js` — state, input, rendering, chart, game loop (all DOM, 394 lines)
-- `tests/contract.test.js` — 25 behavior tests (noise, terrain, targets, resection, fog)
+- `tests/contract.test.js` — 35 behavior tests (noise, terrain, targets, resection, fog, beacon cap, shoreline spawn, reset)
 
 ## Architecture
 
@@ -18,7 +18,11 @@ Key constants: `WORLD=1024` (map size), `PPM=2.5` (pixels per meter), `FR=320` (
 
 ## Tech
 
-Zero dependencies. ES modules. Runs from any static file server (`python3 -m http.server`).
+Zero dependencies. ES modules. Runs from any static file server (`python3 -m http.server`). Deployable to Vercel (`vercel.json` included).
+
+## Deployment
+
+`vercel.json` configured for static hosting. Deploy with `npx vercel` or connect repo to Vercel dashboard.
 
 ## Skill routing
 
