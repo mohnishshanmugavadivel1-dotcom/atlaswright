@@ -6,13 +6,15 @@ Browser-based cartography survey game. Reward-free survey loop: explore, take be
 
 - `index.html` — game page, HUD, chart overlay, CSS (design tokens via CSS custom properties)
 - `noise.js` — seeded simplex noise + fbm (pure math, 42 lines)
-- `world.js` — terrain, fog, landmarks, beacons, bearings, resection (pure logic, zero DOM, 167 lines)
-- `game.js` — state, input, rendering, chart, game loop (all DOM, 394 lines)
-- `tests/contract.test.js` — 35 behavior tests (noise, terrain, targets, resection, fog, beacon cap, shoreline spawn, reset)
+- `world.js` — terrain, fog, landmarks, beacons, bearings, resection (pure logic, zero DOM, 190 lines)
+- `audio.js` — Web Audio ambient system, sound cues, mute toggle (66 lines)
+- `chart.js` — chart overlay drawing, ink strokes, undo, export/import (196 lines)
+- `game.js` — state, input, rendering, persistence, game loop (516 lines)
+- `tests/contract.test.js` — 36 behavior tests (noise, terrain, targets, resection, fog, beacon cap, shoreline spawn, reset, restore)
 
 ## Architecture
 
-Three files. `noise.js` and `world.js` are pure logic with no DOM access. `game.js` owns all browser interaction. This makes `world.js` fully testable without mocks.
+Five files. `noise.js`, `world.js`, `audio.js`, and `chart.js` are focused modules. `game.js` is the orchestrator: state, input, rendering, persistence, game loop. Data flows: game.js owns state, passes it to chart.js and audio.js as needed. world.js is fully testable without mocks.
 
 Key constants: `WORLD=1024` (map size), `PPM=2.5` (pixels per meter), `FR=320` (field radius), `MB=24` (max beacons), `ALG=0.0698` (alignment threshold in radians ~4°).
 

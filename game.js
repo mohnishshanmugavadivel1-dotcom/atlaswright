@@ -1,4 +1,4 @@
-// game.js — orchestrator: state, init, update, render, input, chart, game loop
+// game.js — orchestrator: state, input, rendering, persistence, game loop
 import { initNoise } from './noise.js';
 import {
   WORLD, SR, FR, GR, PPM, MB, ALG,
@@ -8,6 +8,13 @@ import {
   landmarks, findNearestTarget, isAligned,
   placeBeacon as placeBeaconLogic, takeBearing as takeBearingLogic, resetWorld, restoreState,
 } from './world.js';
+import { initAudio, playBeaconSound, playBearingSound, playPublishSound, toggleAudio } from './audio.js';
+import {
+  chart, initChart, drawChart, openChart, closeChart,
+  doPlotFix as chartPlotFix, doUndoStroke as chartUndoStroke,
+  doPublishChart as chartPublish, exportChartJSON, importChartJSON,
+  initChartInput,
+} from './chart.js';
 
 // --- State ---
 const state = {
@@ -16,7 +23,7 @@ const state = {
   camAngle: 0, dt: 0, lastTS: 0,
   keys: {}, mouseDown: false, lastMX: 0, lastMY: 0, pointerLocked: false,
   onGround: false, exploredPct: 0,
-  startTime: 0, personalGoal: '',
+  startTime: 0, personalGoal: '', seed: 1337,
 };
 
 // --- DOM refs ---
@@ -26,17 +33,15 @@ let _minimapDirty = true, _lastMinimapPx = -1, _lastMinimapPz = -1;
 let _terrainCache = null, _terrainCacheKey = '';
 let _exploredTimer = 0;
 
-// --- Chart state ---
-const chart = { strokes: [], fixes: [], currentStroke: [], published: false };
-let chartCanvas, chartCtx;
+
 
 // --- Persistence ---
 const SAVE_KEY = 'atlaswright-save';
-const EXPORT_VERSION = 1;
 
 function saveGame() {
   const data = {
     v: EXPORT_VERSION,
+    seed: state.seed,
     px: state.px, pz: state.pz, camAngle: state.camAngle,
     beacons: beacons.map(b => ({ name: b.name, x: b.x, z: b.z, y: b.y })),
     beaconCount,
@@ -52,7 +57,8 @@ function loadGame() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (data.v !== EXPORT_VERSION) return null;
+    if (data.v !== 1 && data.v !== EXPORT_VERSION) return null;
+    if (!data.seed) data.seed = 1337; // v1 saves lacked seed
     return data;
   } catch (e) { return null; }
 }
@@ -61,35 +67,7 @@ function clearSave() {
   try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
 }
 
-function importChart(jsonStr) {
-  try {
-    const data = JSON.parse(jsonStr);
-    if (data.v !== EXPORT_VERSION) return { ok: false, reason: 'Unsupported chart version.' };
-    // Load into chart overlay for viewing
-    chart.strokes = data.chart.strokes || [];
-    chart.fixes = data.chart.fixes || [];
-    chart.published = true;
-    // Restore landmarks and beacons for display
-    if (data.beacons) {
-      beacons.length = 0;
-      data.beacons.forEach(b => beacons.push(b));
-    }
-    return { ok: true };
-  } catch (e) { return { ok: false, reason: 'Invalid chart file.' }; }
-}
 
-function exportChart() {
-  const data = {
-    v: EXPORT_VERSION,
-    px: state.px, pz: state.pz, camAngle: state.camAngle,
-    beacons: beacons.map(b => ({ name: b.name, x: b.x, z: b.z, y: b.y })),
-    beaconCount,
-    bearings: bearings.map(b => ({ name: b.name, x: b.x, z: b.z, b: b.b, err: b.err })),
-    lastFix, hasFix,
-    chart: { strokes: chart.strokes, fixes: chart.fixes, published: chart.published },
-  };
-  return JSON.stringify(data);
-}
 
 // Auto-save on meaningful changes
 let _autoSaveTimer = null;
@@ -109,9 +87,9 @@ function initInput() {
     state.keys[e.code] = true;
     if (e.code === 'Tab') { e.preventDefault(); toggleChart(); }
     if (e.code === 'KeyE' && state.mode === 0) doTakeBearing();
-    if (e.code === 'KeyF' && state.mode === 0 && hasFix) doPlotFix();
-    if (e.code === 'KeyZ' && state.mode === 1) doUndoStroke();
-    if (e.code === 'Escape' && state.mode === 1) closeChart();
+    if (e.code === 'KeyF' && state.mode === 0 && hasFix) chartPlotFix(setStatus, scheduleSave);
+    if (e.code === 'KeyZ' && state.mode === 1) chartUndoStroke(setStatus);
+    if (e.code === 'Escape' && state.mode === 1) closeChart(m => state.mode = m, setStatus);
     if (e.code === 'Space' && state.mode === 0) { e.preventDefault(); if (state.onGround) { state.pvely = -12; state.onGround = false; } }
   });
   document.addEventListener('keyup', e => { state.keys[e.code] = false; });
@@ -130,16 +108,8 @@ function initInput() {
   document.addEventListener('mouseup', e => {
     if (e.button === 0 && state.mode === 0 && state.started) { state.mouseDown = false; doPlaceBeacon(); }
   });
-  // Chart canvas drawing
-  let drawing = false, lastCx = 0, lastCy = 0;
-  chartCanvas.addEventListener('mousedown', e => { if (chart.published) return; drawing = true; lastCx = e.offsetX; lastCy = e.offsetY; });
-  chartCanvas.addEventListener('mousemove', e => {
-    if (!drawing || chart.published) return;
-    if (chart.currentStroke.length === 0) chart.currentStroke.push({ x: lastCx, y: lastCy });
-    chart.currentStroke.push({ x: e.offsetX, y: e.offsetY });
-    lastCx = e.offsetX; lastCy = e.offsetY; drawChart();
-  });
-  chartCanvas.addEventListener('mouseup', () => { drawing = false; });
+  // Chart canvas drawing (delegated to chart.js)
+  initChartInput(state);
   // Touch support
   let touchStartX = 0, touchStartY = 0;
   document.addEventListener('touchstart', e => {
@@ -189,9 +159,9 @@ function initInput() {
     });
   }
   // Button bindings
-  document.getElementById('btn-undo').onclick = doUndoStroke;
-  document.getElementById('btn-stamp').onclick = doPlotFix;
-  document.getElementById('btn-publish').onclick = doPublishChart;
+  document.getElementById('btn-undo').onclick = () => chartUndoStroke(setStatus);
+  document.getElementById('btn-stamp').onclick = () => chartPlotFix(setStatus, scheduleSave);
+  document.getElementById('btn-publish').onclick = () => chartPublish(state, setStatus, scheduleSave);
   document.getElementById('btn-export').onclick = doExportChart;
   document.getElementById('btn-import').onclick = doImportChart;
   document.getElementById('btn-export-published').onclick = doExportChart;
@@ -230,141 +200,21 @@ function doTakeBearing() {
 }
 
 function doPlotFix() {
-  if (!hasFix || !lastFix) { setStatus('No fix to plot.'); return; }
-  const ext = 260, cw = chartCanvas.width, ch = chartCanvas.height;
-  chart.fixes.push({ x: (lastFix.x + ext) / (2 * ext) * cw, z: (lastFix.z + ext) / (2 * ext) * ch });
-  drawChart();
-  setStatus('Fix plotted on chart.');
-  scheduleSave();
+  chartPlotFix(setStatus, scheduleSave);
 }
 
 function doUndoStroke() {
-  if (chart.strokes.length > 0) { chart.strokes.pop(); drawChart(); setStatus('Stroke undone.'); }
+  chartUndoStroke(setStatus);
 }
 
-// --- Chart ---
-function openChart() {
-  state.mode = 1;
-  document.getElementById('chart-overlay').classList.add('visible');
-  document.getElementById('mode-label').textContent = 'CHART';
-  chartCanvas.width = chartCanvas.parentElement.clientWidth;
-  chartCanvas.height = chartCanvas.parentElement.clientHeight;
-  drawChart();
-}
-
-function closeChart() {
-  state.mode = 0;
-  document.getElementById('chart-overlay').classList.remove('visible');
-  document.getElementById('mode-label').textContent = 'FIELD';
-  chart.currentStroke = [];
-  setStatus('Back in the field.');
-}
-
-function toggleChart() { state.mode === 1 ? closeChart() : openChart(); }
-
-function drawChart() {
-  if (!chartCtx) return;
-  const cw = chartCanvas.width, ch = chartCanvas.height, ext = 260;
-  // Paper base
-  chartCtx.fillStyle = '#ede8df';
-  chartCtx.fillRect(0, 0, cw, ch);
-  // Paper grain texture
-  const grainSeed = 12345;
-  let gr = grainSeed;
-  for (let i = 0; i < 2000; i++) {
-    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
-    const gx = (gr % cw);
-    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
-    const gy = (gr % ch);
-    gr = (gr * 1103515245 + 12345) & 0x7fffffff;
-    const alpha = 0.02 + (gr % 30) * 0.001;
-    chartCtx.fillStyle = `rgba(160,140,100,${alpha})`;
-    chartCtx.fillRect(gx, gy, 1, 1);
-  }
-  // Hint when empty
-  if (chart.strokes.length === 0 && chart.fixes.length === 0) {
-    chartCtx.fillStyle = 'rgba(90,74,48,0.25)';
-    chartCtx.font = 'italic 14px "Instrument Serif", Georgia, serif';
-    chartCtx.textAlign = 'center';
-    chartCtx.fillText('Draw what you see from this vantage point', cw / 2, ch / 2 - 10);
-    chartCtx.font = '12px "Source Sans 3", sans-serif';
-    chartCtx.fillText('Use the ink to sketch terrain, landmarks, and bearings', cw / 2, ch / 2 + 14);
-  }
-  // Grid
-  chartCtx.strokeStyle = 'rgba(180,165,130,0.4)'; chartCtx.lineWidth = 0.5;
-  for (let k = -5; k <= 5; k++) {
-    const gx = (k * 50 + ext) / (2 * ext) * cw;
-    chartCtx.beginPath(); chartCtx.moveTo(gx, 0); chartCtx.lineTo(gx, ch); chartCtx.stroke();
-  }
-  for (let k = -5; k <= 5; k++) {
-    const gz = (k * 50 + ext) / (2 * ext) * ch;
-    chartCtx.beginPath(); chartCtx.moveTo(0, gz); chartCtx.lineTo(cw, gz); chartCtx.stroke();
-  }
-  // Major axes
-  chartCtx.strokeStyle = 'rgba(140,120,80,0.6)'; chartCtx.lineWidth = 1.5;
-  const ax = ext / (2 * ext) * cw, az = ext / (2 * ext) * ch;
-  chartCtx.beginPath(); chartCtx.moveTo(ax, 0); chartCtx.lineTo(ax, ch); chartCtx.stroke();
-  chartCtx.beginPath(); chartCtx.moveTo(0, az); chartCtx.lineTo(cw, az); chartCtx.stroke();
-  // Border
-  chartCtx.strokeStyle = '#1f1c18'; chartCtx.lineWidth = 2; chartCtx.strokeRect(1, 1, cw - 2, ch - 2);
-  // Strokes with ink bleed variation
-  chartCtx.lineCap = 'round'; chartCtx.lineJoin = 'round';
-  function drawInkStroke(pts) {
-    if (pts.length < 2) return;
-    for (let i = 1; i < pts.length; i++) {
-      const w = 1.5 + Math.sin(i * 0.3) * 0.5 + Math.random() * 0.3;
-      chartCtx.strokeStyle = `rgba(31,28,24,${0.7 + Math.random() * 0.3})`;
-      chartCtx.lineWidth = w;
-      chartCtx.beginPath(); chartCtx.moveTo(pts[i - 1].x, pts[i - 1].y); chartCtx.lineTo(pts[i].x, pts[i].y); chartCtx.stroke();
-    }
-  }
-  chart.strokes.forEach(drawInkStroke);
-  drawInkStroke(chart.currentStroke);
-  // Fixes
-  chart.fixes.forEach(fx => {
-    chartCtx.strokeStyle = 'rgba(180,40,30,0.85)'; chartCtx.lineWidth = 1.5;
-    chartCtx.beginPath(); chartCtx.moveTo(fx.x - 8, fx.z - 8); chartCtx.lineTo(fx.x + 8, fx.z + 8);
-    chartCtx.moveTo(fx.x + 8, fx.z - 8); chartCtx.lineTo(fx.x - 8, fx.z + 8); chartCtx.stroke();
-  });
-  // Landmarks
-  landmarks.forEach(l => {
-    const lx = (l.x + ext) / (2 * ext) * cw, lz = (l.z + ext) / (2 * ext) * ch;
-    chartCtx.fillStyle = '#8a5a22'; chartCtx.font = '10px Georgia'; chartCtx.textAlign = 'center';
-    chartCtx.fillText(l.name, lx, lz - 6);
-    chartCtx.fillStyle = '#c08030'; chartCtx.beginPath(); chartCtx.arc(lx, lz, 3, 0, Math.PI * 2); chartCtx.fill();
-  });
-}
+function toggleChart() { state.mode === 1 ? closeChart(m => state.mode = m, setStatus) : openChart(m => state.mode = m, setStatus); }
 
 function doPublishChart() {
-  chart.published = true;
-  document.getElementById('publish-overlay').classList.add('visible');
-  playPublishSound();
-  // Expedition summary
-  document.getElementById('publish-stats').innerHTML =
-    '<strong>Beacons placed:</strong> ' + beaconCount + '<br>' +
-    '<strong>Fixes computed:</strong> ' + chart.fixes.length + '<br>' +
-    '<strong>Chart strokes:</strong> ' + chart.strokes.length + '<br>' +
-    '<strong>Terrain explored:</strong> ' + calcExplored() + '%';
-  // Time summary
-  if (state.startTime) {
-    const elapsed = Math.round((Date.now() - state.startTime) / 1000);
-    const min = Math.floor(elapsed / 60);
-    const sec = elapsed % 60;
-    document.getElementById('publish-time').textContent =
-      'Expedition duration: ' + min + 'm ' + sec + 's';
-  }
-  // Personal goal
-  const goalEl = document.getElementById('publish-goal');
-  if (state.personalGoal) {
-    goalEl.style.display = 'block';
-    goalEl.textContent = 'Your goal: ' + state.personalGoal;
-  }
-  setTimeout(() => { document.getElementById('published-text').classList.add('visible'); }, 500);
-  scheduleSave();
+  chartPublish(state, setStatus, scheduleSave);
 }
 
 function doExportChart() {
-  const json = exportChart();
+  const json = exportChartJSON(state);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -381,9 +231,9 @@ function doImportChart() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      const result = importChart(reader.result);
+      const result = importChartJSON(reader.result, state);
       if (result.ok) {
-        openChart();
+        openChart(m => state.mode = m, setStatus);
         setStatus('Chart imported. View it on the chart overlay.');
       } else {
         setStatus('Import failed: ' + result.reason);
@@ -395,15 +245,26 @@ function doImportChart() {
 }
 
 function resumeGame(data) {
+  state.seed = data.seed || 1337;
+  // Rebuild terrain with saved seed
+  initNoise(state.seed);
+  buildTerrain(state.seed);
+  assignLandmarkHeights();
   state.px = data.px; state.pz = data.pz; state.camAngle = data.camAngle;
   restoreState(data);
-  // Rebuild fog around saved position
   revealFog(state.px, state.pz, 200);
-  // Restore chart
   chart.strokes = data.chart.strokes || [];
   chart.fixes = data.chart.fixes || [];
   chart.published = data.chart.published || false;
-  startGame();
+  // Start without re-reading the dropdown (terrain already built)
+  state.started = true;
+  state.startTime = Date.now();
+  document.getElementById('start-overlay').classList.add('hidden');
+  if (window.matchMedia && !window.matchMedia('(pointer:coarse)').matches) {
+    document.getElementById('world-canvas').requestPointerLock();
+  }
+  const hint = document.getElementById('first-hint');
+  if (hint) { hint.classList.add('visible'); setTimeout(() => hint.classList.remove('visible'), 6000); }
 }
 
 // --- Rendering ---
@@ -597,6 +458,7 @@ function startGame() {
   // Capture region and personal goal from Atelier
   const regionSelect = document.getElementById('region-select');
   const regionSeed = regionSelect ? parseInt(regionSelect.value) : 1337;
+  state.seed = regionSeed;
   const goalInput = document.getElementById('personal-goal');
   state.personalGoal = goalInput ? goalInput.value.trim() : '';
   // Build terrain with selected seed
@@ -619,84 +481,17 @@ function startGame() {
   const mobileBearing = document.getElementById('btn-mobile-bearing');
   if (mobileBearing) mobileBearing.onclick = doTakeBearing;
   const mobileChart = document.getElementById('btn-mobile-chart');
-  if (mobileChart) mobileChart.onclick = toggleChart;
+  if (mobileChart) mobileChart.onclick = () => toggleChart();
 }
 
 // --- Audio ---
-let audioCtx = null, masterGain = null, ambientGain = null;
-let audioStarted = false, audioMuted = false;
-
-function initAudio() {
-  if (audioStarted) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.3;
-    masterGain.connect(audioCtx.destination);
-    ambientGain = audioCtx.createGain();
-    ambientGain.gain.value = 0.15;
-    ambientGain.connect(masterGain);
-    // Wind: filtered white noise
-    const windBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-    const windData = windBuf.getChannelData(0);
-    for (let i = 0; i < windData.length; i++) windData[i] = Math.random() * 2 - 1;
-    const windSrc = audioCtx.createBufferSource();
-    windSrc.buffer = windBuf; windSrc.loop = true;
-    const windFilter = audioCtx.createBiquadFilter();
-    windFilter.type = 'lowpass'; windFilter.frequency.value = 400; windFilter.Q.value = 0.5;
-    const windGain = audioCtx.createGain(); windGain.gain.value = 0.4;
-    windSrc.connect(windFilter); windFilter.connect(windGain); windGain.connect(ambientGain);
-    windSrc.start();
-    // Water: modulated noise
-    const waterBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 3, audioCtx.sampleRate);
-    const waterData = waterBuf.getChannelData(0);
-    for (let i = 0; i < waterData.length; i++) waterData[i] = Math.random() * 2 - 1;
-    const waterSrc = audioCtx.createBufferSource();
-    waterSrc.buffer = waterBuf; waterSrc.loop = true;
-    const waterFilter = audioCtx.createBiquadFilter();
-    waterFilter.type = 'bandpass'; waterFilter.frequency.value = 800; waterFilter.Q.value = 2;
-    const waterGain = audioCtx.createGain(); waterGain.gain.value = 0.15;
-    waterSrc.connect(waterFilter); waterFilter.connect(waterGain); waterGain.connect(ambientGain);
-    waterSrc.start();
-    // Ambient tone: low drone
-    const osc = audioCtx.createOscillator();
-    osc.type = 'sine'; osc.frequency.value = 55;
-    const oscGain = audioCtx.createGain(); oscGain.gain.value = 0.06;
-    osc.connect(oscGain); oscGain.connect(ambientGain);
-    osc.start();
-    audioStarted = true;
-  } catch (e) { /* Web Audio not available */ }
-}
-
-function playTone(freq, duration, vol = 0.2, type = 'sine') {
-  if (!audioCtx || audioMuted) return;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type; osc.frequency.value = freq;
-  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain); gain.connect(masterGain);
-  osc.start(); osc.stop(audioCtx.currentTime + duration);
-}
-
-function playBeaconSound() { playTone(880, 0.08, 0.15, 'square'); setTimeout(() => playTone(1100, 0.06, 0.1, 'square'), 60); }
-function playBearingSound() { playTone(660, 0.15, 0.12); setTimeout(() => playTone(880, 0.2, 0.1), 100); }
-function playPublishSound() { [440, 554, 660, 880].forEach((f, i) => setTimeout(() => playTone(f, 0.3, 0.08), i * 120)); }
-
-function toggleAudio() {
-  audioMuted = !audioMuted;
-  if (masterGain) masterGain.gain.value = audioMuted ? 0 : 0.3;
-  document.getElementById('btn-audio').textContent = audioMuted ? '🔇' : '🔊';
-}
-
 // --- Init ---
 window.addEventListener('DOMContentLoaded', () => {
   canvas = document.getElementById('world-canvas');
   ctx = canvas.getContext('2d');
   minimapCanvas = document.getElementById('minimap');
   minimapCtx = minimapCanvas.getContext('2d');
-  chartCanvas = document.getElementById('chart-canvas');
-  chartCtx = chartCanvas.getContext('2d');
+  initChart(document.getElementById('chart-canvas'));
 
   // Resize
   function resize() {
