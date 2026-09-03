@@ -594,9 +594,20 @@ function gameLoop(ts) {
 function startGame() {
   state.started = true;
   state.startTime = Date.now();
-  // Capture personal goal from Atelier
+  // Capture region and personal goal from Atelier
+  const regionSelect = document.getElementById('region-select');
+  const regionSeed = regionSelect ? parseInt(regionSelect.value) : 1337;
   const goalInput = document.getElementById('personal-goal');
   state.personalGoal = goalInput ? goalInput.value.trim() : '';
+  // Build terrain with selected seed
+  initNoise(regionSeed);
+  buildTerrain(regionSeed);
+  assignLandmarkHeights();
+  // Spawn on dry ground
+  state.px = WORLD / 2; state.pz = WORLD / 2;
+  let h = heightAt(state.px, state.pz);
+  while (h <= 1 && state.px < WORLD - 10) { state.px += 5; h = heightAt(state.px, state.pz); }
+  revealFog(state.px, state.pz, SR);
   document.getElementById('start-overlay').classList.add('hidden');
   // Pointer lock only on desktop (not touch devices)
   if (window.matchMedia && !window.matchMedia('(pointer:coarse)').matches) {
@@ -696,7 +707,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', resize);
 
   initNoise(1337);
-  buildTerrain();
+  buildTerrain(1337);
   assignLandmarkHeights();
   initInput();
 

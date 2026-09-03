@@ -111,7 +111,7 @@ describe('findNearestTarget', () => {
   assignLandmarkHeights();
 
   it('finds closest aligned target', () => {
-    const t = findNearestTarget(380, 380, 0, []);
+    const t = findNearestTarget(380, 400, 0, []);
     assert.ok(t, 'should find a target');
     assert.equal(t.name, 'CAIRN-A');
   });

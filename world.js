@@ -27,13 +27,23 @@ function terrainColor(h, x, z) {
   return [240, 240, 235];
 }
 
-export function buildTerrain() {
+export function buildTerrain(seed) {
+  initNoise(seed || 1337);
   for (let z = 0; z < WORLD; z++) for (let x = 0; x < WORLD; x++) {
     const nx = x / 128, nz = z / 128;
     const n = fbm(nx, nz);
     const dx = x - WORLD / 2, dz = z - WORLD / 2, r = Math.sqrt(dx * dx + dz * dz) / (WORLD / 2);
     const mask = 1 - Math.max(0, Math.min(1, (r - 0.5) / 0.52));
     let h = Math.pow(Math.max(0, n * 0.5 + 0.5), 0.7) * 30 * mask - 3;
+    // Ridge: add a raised line across the island
+    const ridgeDist = Math.abs((x - 300) * 0.3 + (z - 600) * 0.1);
+    if (h > 0 && ridgeDist < 15) h += (1 - ridgeDist / 15) * 8;
+    // Inlet: carve a water channel from the east
+    const inletDist = Math.abs(z - 512);
+    if (x > 600 && x < 800 && inletDist < 20 + (x - 600) * 0.3) {
+      const carved = 1 - Math.max(0, 1 - inletDist / (20 + (x - 600) * 0.3));
+      h -= carved * 5;
+    }
     if (h > 0 && h < 1.5) h *= 1 - 0.4 * (1 - h / 1.5);
     const i = z * WORLD + x;
     heightMap[i] = h;
@@ -62,7 +72,9 @@ export function calcExplored() {
 export const landmarks = [
   { name: 'CAIRN-A', x: 380, z: 380 },
   { name: 'CAIRN-B', x: 680, z: 520 },
-  { name: 'CAIRN-C', x: 460, z: 700 }
+  { name: 'CAIRN-C', x: 460, z: 700 },
+  { name: 'WRECK', x: 750, z: 350 },
+  { name: 'MARKER', x: 300, z: 250 },
 ];
 
 export function assignLandmarkHeights() {
