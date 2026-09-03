@@ -122,7 +122,9 @@ function initInput() {
   });
   document.addEventListener('mousemove', e => {
     if (state.pointerLocked) state.camAngle += e.movementX * 0.003;
-    else if (state.mouseDown) { state.camAngle += (e.clientX - state.lastMX) * 0.003; state.lastMX = e.clientX; state.lastMY = e.clientY; }
+    else if (state.mouseDown || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches)) {
+      state.camAngle += (e.clientX - state.lastMX) * 0.003; state.lastMX = e.clientX; state.lastMY = e.clientY;
+    }
   });
   document.addEventListener('pointerlockchange', () => { state.pointerLocked = !!document.pointerLockElement; });
   document.addEventListener('mouseup', e => {
@@ -138,6 +140,54 @@ function initInput() {
     lastCx = e.offsetX; lastCy = e.offsetY; drawChart();
   });
   chartCanvas.addEventListener('mouseup', () => { drawing = false; });
+  // Touch support
+  let touchStartX = 0, touchStartY = 0;
+  document.addEventListener('touchstart', e => {
+    if (!state.started || state.mode !== 0) return;
+    const t = e.touches[0];
+    touchStartX = t.clientX; touchStartY = t.clientY;
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (!state.started || state.mode !== 0) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchStartX;
+    state.camAngle += dx * 0.005;
+    touchStartX = t.clientX; touchStartY = t.clientY;
+  }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (!state.started || state.mode !== 0) return;
+    // Tap = beacon placement
+    doPlaceBeacon();
+  });
+  // Virtual joystick for mobile
+  const joyEl = document.getElementById('joystick');
+  if (joyEl) {
+    let joyActive = false, joyX = 0, joyY = 0;
+    const joyKnob = document.getElementById('joystick-knob');
+    joyEl.addEventListener('touchstart', e => { e.preventDefault(); joyActive = true; });
+    document.addEventListener('touchmove', e => {
+      if (!joyActive) return;
+      const t = e.touches[0];
+      const rect = joyEl.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      joyX = Math.max(-1, Math.min(1, (t.clientX - cx) / (rect.width / 2)));
+      joyY = Math.max(-1, Math.min(1, (t.clientY - cy) / (rect.height / 2)));
+      if (joyKnob) {
+        joyKnob.style.transform = `translate(${joyX * 20}px, ${joyY * 20}px)`;
+      }
+      // Map joystick to WASD keys
+      state.keys['KeyW'] = joyY < -0.3;
+      state.keys['KeyS'] = joyY > 0.3;
+      state.keys['KeyA'] = joyX < -0.3;
+      state.keys['KeyD'] = joyX > 0.3;
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+      joyActive = false; joyX = 0; joyY = 0;
+      if (joyKnob) joyKnob.style.transform = '';
+      state.keys['KeyW'] = false; state.keys['KeyS'] = false;
+      state.keys['KeyA'] = false; state.keys['KeyD'] = false;
+    });
+  }
   // Button bindings
   document.getElementById('btn-undo').onclick = doUndoStroke;
   document.getElementById('btn-stamp').onclick = doPlotFix;
@@ -414,18 +464,36 @@ function render() {
     ctx.fillStyle = '#ff6600'; ctx.fillRect(s.x - 1, s.z - 14, 4, 6);
     ctx.fillStyle = '#fff'; ctx.font = '9px Georgia'; ctx.textAlign = 'center'; ctx.fillText(b.name, s.x, s.z - 18);
   });
-  // Crosshair
+  // Crosshair — shape changes when aligned (non-color cue for colorblind)
   const target = findNearestTarget(state.px, state.pz, state.camAngle, bearings);
   const aligned = target && isAligned(state.px, state.pz, state.camAngle, bearings);
-  ctx.strokeStyle = aligned ? 'rgba(255,180,0,0.9)' : 'rgba(255,255,255,0.7)';
-  ctx.lineWidth = 2;
   const cx = cW / 2, cy = cH / 2;
-  ctx.beginPath();
-  ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 4, cy);
-  ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 12, cy);
-  ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 4);
-  ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 12);
-  ctx.stroke();
+  if (aligned) {
+    // Aligned: circle + thicker lines + pulse effect
+    const pulse = 1 + Math.sin(Date.now() * 0.008) * 0.15;
+    ctx.strokeStyle = 'rgba(255,180,0,0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    // Crosshair lines extend beyond circle
+    ctx.beginPath();
+    ctx.moveTo(cx - 22, cy); ctx.lineTo(cx - 18, cy);
+    ctx.moveTo(cx + 18, cy); ctx.lineTo(cx + 22, cy);
+    ctx.moveTo(cx, cy - 22); ctx.lineTo(cx, cy - 18);
+    ctx.moveTo(cx, cy + 18); ctx.lineTo(cx, cy + 22);
+    ctx.stroke();
+  } else {
+    // Not aligned: simple cross
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 4, cy);
+    ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 12, cy);
+    ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 4);
+    ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 12);
+    ctx.stroke();
+  }
   if (aligned && target) {
     ctx.fillStyle = 'rgba(255,180,0,0.9)';
     ctx.font = 'bold 13px "Source Sans 3", sans-serif';
@@ -485,7 +553,8 @@ function renderMinimap() {
 // --- Update ---
 function update(delta) {
   if (state.mode !== 0 || !state.started) return;
-  if (!document.pointerLockElement) { state.pvelx = 0; return; }
+  const isTouch = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+  if (!isTouch && !document.pointerLockElement) { state.pvelx = 0; return; }
   const speed = (state.keys['ShiftLeft'] || state.keys['ShiftRight']) ? 7 : 4;
   let mx = 0, mz = 0;
   if (state.keys['KeyW']) { mx += Math.sin(state.camAngle); mz += Math.cos(state.camAngle); }
@@ -529,9 +598,17 @@ function startGame() {
   const goalInput = document.getElementById('personal-goal');
   state.personalGoal = goalInput ? goalInput.value.trim() : '';
   document.getElementById('start-overlay').classList.add('hidden');
-  document.getElementById('world-canvas').requestPointerLock();
+  // Pointer lock only on desktop (not touch devices)
+  if (window.matchMedia && !window.matchMedia('(pointer:coarse)').matches) {
+    document.getElementById('world-canvas').requestPointerLock();
+  }
   const hint = document.getElementById('first-hint');
   if (hint) { hint.classList.add('visible'); setTimeout(() => hint.classList.remove('visible'), 6000); }
+  // Mobile button handlers
+  const mobileBearing = document.getElementById('btn-mobile-bearing');
+  if (mobileBearing) mobileBearing.onclick = doTakeBearing;
+  const mobileChart = document.getElementById('btn-mobile-chart');
+  if (mobileChart) mobileChart.onclick = toggleChart;
 }
 
 // --- Audio ---

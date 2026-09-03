@@ -57,6 +57,7 @@ canvas{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
 #first-hint.visible{opacity:1}
 #first-hint strong{color:var(--brass)}
 #status-bar{transition:opacity .3s}
+@media (pointer:coarse){#joystick,#mobile-actions{display:block!important}}
 </style>
 </head>
 <body>
@@ -80,6 +81,15 @@ TAB open chart | Z undo | ESC close chart | Right Click release mouse
 </div>
 <div id="first-hint"><strong>Find the triangles</strong> on the map — those are cairns.<br>Walk toward one, aim your crosshair at it, and press <strong>E</strong> to take a bearing.</div>
 <div id="status-bar">Explore the island. Find landmarks. Take bearings. Draw your chart.</div>
+<!-- Virtual joystick for mobile -->
+<div id="joystick" style="display:none;position:absolute;bottom:80px;left:30px;width:80px;height:80px;border-radius:50%;background:rgba(18,16,12,0.6);border:2px solid var(--ink-mid);z-index:15;touch-action:none">
+<div id="joystick-knob" style="position:absolute;top:50%;left:50%;width:30px;height:30px;border-radius:50%;background:var(--brass);transform:translate(-50%,-50%);opacity:0.7"></div>
+</div>
+<!-- Mobile action buttons -->
+<div id="mobile-actions" style="display:none;position:absolute;bottom:80px;right:30px;z-index:15;gap:8px">
+<button id="btn-mobile-bearing" style="width:50px;height:50px;border-radius:50%;background:var(--surface);border:2px solid var(--brass);color:var(--brass);font-size:18px;cursor:pointer">E</button>
+<button id="btn-mobile-chart" style="width:50px;height:50px;border-radius:50%;background:var(--surface);border:2px solid var(--ink-mid);color:var(--parchment);font-size:14px;cursor:pointer">📋</button>
+</div>
 <div id="chart-overlay">
 <div id="chart-panel">
 <div id="chart-header">
