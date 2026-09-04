@@ -66,6 +66,7 @@ import {
   lastFix, hasFix, colorMap,
   landmarks, beacons, bearings, beaconCount,
   placeBeacon, takeBearing, resetWorld, restoreState,
+  normalizeDeg, nearestUnrecordedTarget, aimInfo,
 } from '../world.js';
 
 describe('heightAt', () => {
@@ -78,6 +79,25 @@ describe('heightAt', () => {
   it('returns finite number inside world', () => {
     const h = heightAt(512, 512);
     assert.ok(typeof h === 'number' && Number.isFinite(h));
+  });
+  it('resolves fractional positions to their terrain cell (player can move)', () => {
+    buildTerrain();
+    const cell = heightAt(512, 512);
+    assert.ok(cell > 0, 'spawn cell must be land for the seed-1337 world');
+    // Movement advances positions by fractions of a cell per frame; every
+    // fraction inside the spawn cell must read the same land height, never water.
+    for (const [x, z] of [[512.06, 512], [512.49, 512], [512, 512.49], [511.51, 511.51], [512.49, 512.49]]) {
+      const h = heightAt(x, z);
+      assert.ok(h > 0, `heightAt(${x}, ${z}) = ${h} — fractional lookup fell into water`);
+      assert.equal(h, cell);
+    }
+  });
+  it('snaps to the neighbouring cell past the half-way mark', () => {
+    buildTerrain();
+    const cell = heightAt(512, 512);
+    const next = heightAt(513, 512);
+    assert.equal(heightAt(512.6, 512), next);
+    assert.equal(heightAt(512.4, 512), cell);
   });
 });
 
@@ -131,6 +151,62 @@ describe('findNearestTarget', () => {
   it('respects range limit (FR)', () => {
     const t = findNearestTarget(10, 10, 0, []);
     assert.equal(t, null, 'too far from any target');
+  });
+});
+
+describe('normalizeDeg', () => {
+  it('normalizes to [0, 360)', () => {
+    assert.equal(normalizeDeg(0), 0);
+    assert.equal(normalizeDeg(Math.PI), 180);
+    assert.equal(normalizeDeg(2 * Math.PI), 0);
+  });
+  it('never returns negatives for large negative angles', () => {
+    // This used to produce "-236 deg undefined" in the HUD
+    for (const rad of [-12, -6.28, -3 * Math.PI, -100, -0.9, 20 * Math.PI]) {
+      const d = normalizeDeg(rad);
+      assert.ok(d >= 0 && d < 360, `normalizeDeg(${rad}) = ${d} should be in [0, 360)`);
+    }
+  });
+  it('handles NaN gracefully (never renders NaN to the HUD)', () => {
+    assert.equal(normalizeDeg(NaN), 0);
+  });
+});
+
+describe('nearestUnrecordedTarget', () => {
+  it('returns the closest marker by distance regardless of aim', () => {
+    const t = nearestUnrecordedTarget(600, 500, []);
+    assert.ok(t, 'should find a marker');
+    assert.equal(t.name, 'CAIRN-B');
+  });
+  it('excludes recorded markers', () => {
+    const t = nearestUnrecordedTarget(600, 500, [{ name: 'CAIRN-B' }]);
+    assert.notEqual(t.name, 'CAIRN-B');
+  });
+  it('returns null outside FR', () => {
+    assert.equal(nearestUnrecordedTarget(10, 10, []), null);
+  });
+});
+
+describe('aimInfo', () => {
+  // WRECK sits at (750, 350) with no other landmark closer than ~170m,
+  // so the aim-biased nearest-target pick is deterministic around it.
+  it('reports right when the target is east of the player', () => {
+    const info = aimInfo(690, 350, 0, []); // west of WRECK, looking north
+    assert.ok(info, 'should find a target');
+    assert.equal(info.target.name, 'WRECK');
+    assert.equal(info.turn, 'right');
+    assert.ok(info.dist > 55 && info.dist < 65, `dist ${info.dist}`);
+    assert.ok(info.offDeg > 85 && info.offDeg < 95, `offDeg ${info.offDeg}`);
+  });
+  it('reports left when the target is west of the player', () => {
+    const info = aimInfo(810, 350, 0, []); // east of WRECK, looking north
+    assert.equal(info.target.name, 'WRECK');
+    assert.equal(info.turn, 'left');
+  });
+  it('reports near-zero offset when facing the target', () => {
+    const info = aimInfo(810, 350, -Math.PI / 2, []); // looking west at WRECK
+    assert.equal(info.target.name, 'WRECK');
+    assert.ok(info.offRad <= ALG, `offRad ${info.offRad} should be aligned`);
   });
 });
 

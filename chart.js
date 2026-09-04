@@ -104,7 +104,6 @@ export function closeChart(setMode, setStatus) {
   document.getElementById('chart-overlay').classList.remove('visible');
   document.getElementById('mode-label').textContent = 'FIELD';
   chart.currentStroke = [];
-  setStatus('Back in the field.');
 }
 
 export function toggleChart(setMode, setStatus) {

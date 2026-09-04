@@ -19,7 +19,7 @@ Open `http://localhost:8000` in your browser.
 | Shift | Run |
 | Space | Jump |
 | Left Click | Plant beacon |
-| E | Take bearing on nearest target |
+| E | Record direction to a marker when it is centered in your crosshair |
 | F | Plot fix on chart |
 | TAB | Open/close chart |
 | Z | Undo last stroke |
@@ -29,11 +29,14 @@ Open `http://localhost:8000` in your browser.
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Game page, HUD, chart overlay, CSS |
+| `index.html` | Game page, HUD, onboarding step tracker, chart overlay, CSS |
 | `noise.js` | Seeded simplex noise and fractal Brownian motion |
-| `world.js` | Terrain, fog, landmarks, beacons, bearings, resection — pure logic, zero DOM |
-| `game.js` | State, input, rendering, chart, game loop — all DOM |
-| `tests/contract.test.js` | 25 behavior tests covering noise, terrain, targets, resection, fog |
+| `world.js` | Terrain, fog-of-war, landmarks, beacons, bearings, resection — pure logic, zero DOM |
+| `audio.js` | Web Audio: ambient loop, footstep and record sounds, mute toggle |
+| `chart.js` | Chart overlay drawing, ink strokes, undo, export/import |
+| `render.js` | Canvas rendering: terrain, fog reveal, markers, crosshair, compass, minimap |
+| `game.js` | State, input, HUD state machine, persistence, game loop |
+| `tests/contract.test.js` | 55 behavior tests covering noise, terrain, targets, alignment, resection, fog, height snapping |
 
 ## Tests
 
@@ -43,4 +46,4 @@ node --test tests/contract.test.js
 
 ## Tech
 
-Zero dependencies. Three ES modules. Runs from any static file server.
+Zero dependencies. Six ES modules. Runs from any static file server.

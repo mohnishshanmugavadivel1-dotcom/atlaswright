@@ -1,9 +1,9 @@
 // render.js — pseudo-3D raycasting renderer + HUD elements
 import {
-  WORLD, FR, PPM,
-  heightAt, fogVersion, colorMap, fogMap,
-  beacons, bearings, lastFix, hasFix, landmarks,
-  findNearestTarget, isAligned,
+  WORLD, FR, ALG, MB,
+  heightAt, colorMap, fogMap,
+  beacons, bearings, landmarks,
+  normalizeDeg, nearestUnrecordedTarget, aimInfo, beaconCount,
 } from './world.js';
 
 let ctx, cW, cH;
@@ -27,7 +27,8 @@ export function initRender(worldCanvas, minimapCanvasEl) {
 const FOV = 70 * Math.PI / 180; // 70 degrees
 const HALF_FOV = FOV / 2;
 const MAX_RAY_DIST = 300;
-const WALL_HEIGHT_SCALE = 60; // how tall walls appear
+const WALL_HEIGHT_SCALE = 95; // how tall walls appear
+const EYE_HEIGHT = 5.5; // eye level above terrain — low enough that terrain reads as walls
 
 function castRay(ox, oz, angle, maxDist) {
   const dx = Math.sin(angle);
@@ -69,7 +70,7 @@ function drawFloor() {
 function drawRaycastView(state, bobOffset) {
   const numRays = Math.ceil(cW / 2); // one column per 2 pixels for performance
   const halfH = cH / 2 + bobOffset;
-  const eyeHeight = 8; // player eye height above terrain
+  const eyeHeight = EYE_HEIGHT + (state.py || 0); // rises during jumps
 
   for (let i = 0; i < numRays; i++) {
     const screenX = (i / numRays) * cW;
@@ -88,8 +89,8 @@ function drawRaycastView(state, bobOffset) {
     const heightDiff = eyeHeight - ray.h;
     // Projected wall height
     const projH = (WALL_HEIGHT_SCALE * eyeHeight) / Math.max(ray.dist, 1);
-    const wallTop = halfH - projH / 2 + heightDiff * 3;
-    const wallBottom = halfH + projH / 2 + heightDiff * 3;
+    const wallTop = halfH - projH / 2 + heightDiff * 4;
+    const wallBottom = halfH + projH / 2 + heightDiff * 4;
 
     // Get terrain color with distance fog
     const [r, g, b] = getTerrainColorAt(ray.x, ray.z);
@@ -98,12 +99,12 @@ function drawRaycastView(state, bobOffset) {
     const fg = Math.round(g * (1 - fogFactor * 0.6));
     const fb = Math.round(b * (1 - fogFactor * 0.6) + 130 * fogFactor * 0.6);
 
-    // Fog of war check
+    // Fog of war check — hidden ground still readable, revealed ground pops
     const fogIdx = ray.z * WORLD + ray.x;
     const fogVal = fogIdx >= 0 && fogIdx < fogMap.length ? fogMap[fogIdx] : 0;
     let alpha = 1;
-    if (fogVal === 0) alpha = 0.15;
-    else if (fogVal === 2) alpha = 0.5;
+    if (fogVal === 0) alpha = 0.35;
+    else if (fogVal === 2) alpha = 0.7;
 
     // Draw ground column
     ctx.fillStyle = `rgba(${fr},${fg},${fb},${alpha})`;
@@ -158,7 +159,7 @@ function drawLandmarkSprites(state) {
     const spriteW = spriteH * 0.5;
     const baseY = cH / 2 + spriteH * 0.3;
 
-    const alpha = s.fogVal === 0 ? 0.15 : s.fogVal === 2 ? 0.5 : 1;
+    const alpha = s.fogVal === 0 ? 0.35 : s.fogVal === 2 ? 0.7 : 1;
 
     if (s.type === 'landmark') {
       // Triangle shape for cairns
@@ -188,45 +189,85 @@ function drawLandmarkSprites(state) {
   });
 }
 
+function drawEdgeArrow(state, target) {
+  const dx = target.x - state.px, dz = target.z - state.pz;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const angle = Math.atan2(dx, -dz);
+  let rel = angle - state.camAngle;
+  while (rel > Math.PI) rel -= Math.PI * 2;
+  while (rel < -Math.PI) rel += Math.PI * 2;
+  const ax = rel >= 0 ? cW - 70 : 70;
+  const ay = cH / 2;
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(rel);
+  ctx.fillStyle = 'rgba(232,168,64,0.95)';
+  ctx.beginPath();
+  ctx.moveTo(0, -13);
+  ctx.lineTo(-8, 3);
+  ctx.lineTo(8, 3);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = '11px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(Math.round(dist) + 'm', 0, 20);
+  ctx.restore();
+}
+
 function drawCrosshair(state) {
   const cx = cW / 2, cy = cH / 2;
-  const target = findNearestTarget(state.px, state.pz, state.camAngle, bearings);
-  const aligned = target && isAligned(state.px, state.pz, state.camAngle, bearings);
+  const done = beaconCount >= MB;
+  const info = aimInfo(state.px, state.pz, state.camAngle, bearings);
 
-  if (aligned) {
-    // Pulsing gold ring
+  if (info && info.offRad <= ALG) {
+    // READY: aligned with a marker — pulsing gold ring
     const pulse = 1 + Math.sin(Date.now() * 0.008) * 0.15;
     ctx.strokeStyle = 'rgba(255,180,0,0.9)';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(cx, cy, 16 * pulse, 0, Math.PI * 2);
     ctx.stroke();
-    // Tick marks
     ctx.beginPath();
     ctx.moveTo(cx - 22, cy); ctx.lineTo(cx - 18, cy);
     ctx.moveTo(cx + 18, cy); ctx.lineTo(cx + 22, cy);
     ctx.moveTo(cx, cy - 22); ctx.lineTo(cx, cy - 18);
     ctx.moveTo(cx, cy + 18); ctx.lineTo(cx, cy + 22);
     ctx.stroke();
-    // Target name
-    ctx.fillStyle = 'rgba(255,180,0,0.9)';
+    ctx.fillStyle = 'rgba(255,180,0,0.95)';
     ctx.font = 'bold 13px "Source Sans 3", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(target.name, cx, cy + 28);
+    ctx.fillText(info.target.name, cx, cy + 28);
     ctx.font = '11px "JetBrains Mono", monospace';
-    ctx.fillStyle = 'rgba(255,180,0,0.7)';
-    ctx.fillText('press E', cx, cy + 42);
-  } else {
-    // Simple cross
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillStyle = 'rgba(255,180,0,0.8)';
+    ctx.fillText(done ? 'open chart (TAB)' : 'press E', cx, cy + 42);
+    return;
+  }
+
+  if (info && info.offDeg <= 50) {
+    // AIMING: a marker is ahead, just not centered
+    ctx.strokeStyle = 'rgba(232,168,64,0.65)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 4, cy);
-    ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 12, cy);
-    ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 4);
-    ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 12);
+    ctx.arc(cx, cy, 11, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.fillStyle = 'rgba(232,168,64,0.85)';
+    ctx.font = '12px "Source Sans 3", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(info.target.name + ' · ' + Math.round(info.dist) + 'm · turn ' + info.turn, cx, cy + 32);
+    return;
   }
+
+  // Plain cross, plus an edge arrow toward the nearest marker if one exists
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 4, cy);
+  ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 12, cy);
+  ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 4);
+  ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 12);
+  ctx.stroke();
+  const guide = info ? info.target : nearestUnrecordedTarget(state.px, state.pz, bearings);
+  if (guide) drawEdgeArrow(state, guide);
 }
 
 function drawCompassRose(state) {
@@ -288,7 +329,7 @@ function drawSprintBar(state, stamina) {
 }
 
 function drawMinimap(state) {
-  const mw = 160, mh = 160, sc = WORLD / mw;
+  const mw = 176, mh = 176, sc = WORLD / mw;
   const id = minimapCtx.createImageData(mw, mh);
   for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
     const wx = Math.floor(x * sc), wz = Math.floor(y * sc);
@@ -305,16 +346,41 @@ function drawMinimap(state) {
   minimapCtx.putImageData(id, 0, 0);
   minimapCtx.strokeStyle = 'rgba(200,180,120,0.5)'; minimapCtx.lineWidth = 1;
   minimapCtx.strokeRect(0, 0, mw, mh);
-  // Player dot
+  // Revealed markers appear on the map as you walk (strong movement feedback)
+  landmarks.forEach(l => {
+    const fv = fogMap[l.z * WORLD + l.x];
+    if (fv !== 1 && fv !== 2) return;
+    const lx = (l.x / WORLD) * mw, lz = (l.z / WORLD) * mh;
+    minimapCtx.fillStyle = '#c08030';
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(lx, lz - 4);
+    minimapCtx.lineTo(lx - 3.5, lz + 3);
+    minimapCtx.lineTo(lx + 3.5, lz + 3);
+    minimapCtx.closePath();
+    minimapCtx.fill();
+  });
+  beacons.forEach(b => {
+    const fv = fogMap[Math.floor(b.z) * WORLD + Math.floor(b.x)];
+    if (fv !== 1 && fv !== 2) return;
+    const bx = (b.x / WORLD) * mw, bz = (b.z / WORLD) * mh;
+    minimapCtx.fillStyle = '#ff6600';
+    minimapCtx.fillRect(bx - 1.5, bz - 1.5, 3, 3);
+  });
+  // Player dot + facing line
   const ppx = (state.px / WORLD) * mw, ppz = (state.pz / WORLD) * mh;
-  minimapCtx.fillStyle = '#ff6600';
-  minimapCtx.beginPath(); minimapCtx.arc(ppx, ppz, 3, 0, Math.PI * 2); minimapCtx.fill();
-  // Direction line
   minimapCtx.strokeStyle = '#ff6600'; minimapCtx.lineWidth = 2;
   minimapCtx.beginPath();
   minimapCtx.moveTo(ppx, ppz);
-  minimapCtx.lineTo(ppx + Math.sin(state.camAngle) * 10, ppz - Math.cos(state.camAngle) * 10);
+  minimapCtx.lineTo(ppx + Math.sin(state.camAngle) * 12, ppz - Math.cos(state.camAngle) * 12);
   minimapCtx.stroke();
+  minimapCtx.fillStyle = '#ff6600';
+  minimapCtx.beginPath(); minimapCtx.arc(ppx, ppz, 3.5, 0, Math.PI * 2); minimapCtx.fill();
+  // Explored percentage
+  const pct = state.exploredPct != null ? state.exploredPct : '0.0';
+  minimapCtx.fillStyle = 'rgba(232,216,176,0.9)';
+  minimapCtx.font = '9px "JetBrains Mono", monospace';
+  minimapCtx.textAlign = 'left';
+  minimapCtx.fillText('Explored ' + pct + '%', 5, mh - 6);
 }
 
 // --- Main render entry point ---
@@ -340,10 +406,10 @@ export function render(state, stamina, bobOffset) {
   // Sprint bar
   drawSprintBar(state, stamina != null ? stamina : 100);
 
-  // Compass text
-  const deg = Math.round((state.camAngle * 180 / Math.PI + 360) % 360);
+  // Compass text — always a valid 0-359 heading with a cardinal direction
+  const deg = Math.round(normalizeDeg(state.camAngle));
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  document.getElementById('compass').textContent = String(deg).padStart(3, '0') + ' deg ' + dirs[Math.round(deg / 45) % 8];
+  document.getElementById('compass').textContent = String(deg).padStart(3, '0') + '° ' + dirs[Math.round(deg / 45) % 8];
 
   // Minimap (update every few frames, not every frame)
   if (Math.floor(Date.now() / 200) !== render._lastMinimapTick) {

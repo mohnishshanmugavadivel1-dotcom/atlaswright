@@ -58,6 +58,8 @@ function playTone(freq, duration, vol = 0.2, type = 'sine') {
 export function playBeaconSound() { playTone(880, 0.08, 0.15, 'square'); setTimeout(() => playTone(1100, 0.06, 0.1, 'square'), 60); }
 export function playBearingSound() { playTone(660, 0.15, 0.12); setTimeout(() => playTone(880, 0.2, 0.1), 100); }
 export function playPublishSound() { [440, 554, 660, 880].forEach((f, i) => setTimeout(() => playTone(f, 0.3, 0.08), i * 120)); }
+export function playFootstepSound() { playTone(70 + Math.random() * 25, 0.06, 0.05, 'triangle'); }
+export function playLockSound() { playTone(1200, 0.05, 0.08, 'square'); setTimeout(() => playTone(1600, 0.08, 0.06, 'square'), 60); }
 
 export function toggleAudio() {
   audioMuted = !audioMuted;

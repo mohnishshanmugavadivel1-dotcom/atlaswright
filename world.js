@@ -2,7 +2,7 @@
 // Pure logic only. No DOM access. All state is module-level.
 import { seedRng, initNoise, fbm, lerp } from './noise.js';
 
-export const WORLD = 1024, PPM = 2.5, SR = 200, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
+export const WORLD = 1024, PPM = 2.5, SR = 110, FR = 320, GR = 50, MB = 24, ALG = 0.0698;
 
 // --- Terrain ---
 const heightMap = new Float32Array(WORLD * WORLD);
@@ -11,8 +11,13 @@ export const fogMap = new Uint8Array(WORLD * WORLD); // 0=hidden, 1=revealed, 2=
 export let fogVersion = 0;
 
 export function heightAt(x, z) {
-  if (x < 0 || z < 0 || x >= WORLD || z >= WORLD) return -999;
-  return heightMap[z * WORLD + x];
+  // Movement and logic pass fractional positions (speed 4 cells/s), but the
+  // height/color grid is one sample per integer cell. Resolve the cell the
+  // point stands in before indexing — the old raw index read a random cell
+  // for fractional input, so the player was permanently "blocked" at spawn.
+  const ix = Math.round(x), iz = Math.round(z);
+  if (ix < 0 || iz < 0 || ix >= WORLD || iz >= WORLD) return -999;
+  return heightMap[iz * WORLD + ix];
 }
 
 function terrainColor(h, x, z) {
@@ -92,6 +97,14 @@ export const landmarks = [
   { name: 'MARKER', x: 300, z: 250 },
 ];
 
+// Normalize a radian heading to a display degree in [0, 360). Never negative,
+// never NaN-safe for normal input, so HUD text can never read "-236 deg".
+export function normalizeDeg(rad) {
+  let d = rad * 180 / Math.PI;
+  d = ((d % 360) + 360) % 360;
+  return Number.isFinite(d) ? d : 0;
+}
+
 export function assignLandmarkHeights() {
   landmarks.forEach(l => { l.y = Math.max(heightAt(l.x, l.z), 2) + 4; });
 }
@@ -101,11 +114,11 @@ export const beacons = [];
 export let beaconCount = 0;
 
 export function placeBeacon(px, pz, camAngle) {
-  if (beaconCount >= MB) return { ok: false, reason: 'Maximum beacons placed (' + MB + '/' + MB + '). Open your chart to publish.' };
+  if (beaconCount >= MB) return { ok: false, reason: 'All ' + MB + ' beacons placed. Open the chart (TAB) and publish.' };
   const wx = px + Math.sin(camAngle) * 10;
   const wz = pz + Math.cos(camAngle) * 10;
   const h = heightAt(wx, wz);
-  if (h <= 0) return { ok: false, reason: 'Beacons must be on dry land. Move inland.' };
+  if (h <= 0) return { ok: false, reason: 'That spot is in the water. Walk to dry land first.' };
   beaconCount++;
   const bn = 'BEACON-' + String(beaconCount).padStart(2, '0');
   beacons.push({ name: bn, x: wx, z: wz, y: h + 0.85 });
@@ -138,6 +151,42 @@ export function findNearestTarget(px, pz, camAngle, bearingsList) {
   return best;
 }
 
+// Nearest unrecorded marker by pure distance — used for the "walk this way"
+// guidance arrow and "move toward a marker" hints (findNearestTarget above is
+// biased by aim angle for the E action itself).
+export function nearestUnrecordedTarget(px, pz, bearingsList) {
+  const recorded = new Set(bearingsList.map(b => b.name));
+  let best = null, bestD = Infinity;
+  const consider = t => {
+    if (recorded.has(t.name)) return;
+    const dx = t.x - px, dz = t.z - pz;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d <= FR && d < bestD) { bestD = d; best = t; }
+  };
+  landmarks.forEach(consider);
+  beacons.forEach(consider);
+  return best;
+}
+
+// How far/which way the player must turn to face the nearest target, plus its
+// distance. Used by takeBearing for failure text and by the HUD for guidance.
+export function aimInfo(px, pz, camAngle, bearingsList) {
+  const t = findNearestTarget(px, pz, camAngle, bearingsList);
+  if (!t) return null;
+  const dx = t.x - px, dz = t.z - pz;
+  const trueB = Math.atan2(dx, -dz);
+  let delta = (trueB - camAngle) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return {
+    target: t,
+    dist: Math.sqrt(dx * dx + dz * dz),
+    offRad: Math.abs(delta),
+    offDeg: Math.abs(delta) * 180 / Math.PI,
+    turn: delta >= 0 ? 'right' : 'left',
+  };
+}
+
 export function isAligned(px, pz, camAngle, bearingsList) {
   const t = findNearestTarget(px, pz, camAngle, bearingsList);
   if (!t) return false;
@@ -146,16 +195,24 @@ export function isAligned(px, pz, camAngle, bearingsList) {
   return angDiff(camAngle, trueB) <= ALG;
 }
 
+const DONE_REASON = 'All ' + MB + ' beacons placed. Open the chart (TAB) and publish.';
+
 export function takeBearing(px, pz, camAngle) {
   const tx = findNearestTarget(px, pz, camAngle, bearings);
-  if (!tx) return { ok: false, reason: 'No targets in range. Move closer to a cairn or beacon.' };
-  const dx = tx.x - px, dz = tx.z - pz;
-  const trueB = Math.atan2(dx, -dz);
-  const off = angDiff(camAngle, trueB);
-  if (off > ALG) return { ok: false, reason: 'Crosshair is ' + (off * 180 / Math.PI).toFixed(1) + '° off ' + tx.name + '. Adjust aim and press E.' };
-  bearings.push({ name: tx.name, x: tx.x, z: tx.z, b: camAngle, err: off * 180 / Math.PI });
+  if (!tx) return { ok: false, reason: beaconCount >= MB ? DONE_REASON : 'No marker close enough. Walk toward a marker (▲).' };
+  const info = aimInfo(px, pz, camAngle, bearings);
+  if (!info || info.offRad > ALG) {
+    const offDeg = info ? Math.round(info.offDeg) : 0;
+    const turn = info ? info.turn : 'left';
+    return {
+      ok: false,
+      reason: beaconCount >= MB ? DONE_REASON : 'Turn ' + turn + ' toward ' + tx.name + ' (' + offDeg + '°), then press E.',
+      target: tx.name, offDeg, turn,
+    };
+  }
+  bearings.push({ name: tx.name, x: tx.x, z: tx.z, b: camAngle, err: info.offRad * 180 / Math.PI });
   const fix = tryFix(px, pz);
-  return { ok: true, bearing: tx.name, degrees: Math.round(camAngle * 180 / Math.PI), fix };
+  return { ok: true, bearing: tx.name, degrees: Math.round(normalizeDeg(camAngle)), fix };
 }
 
 function tryFix(px, pz) {
