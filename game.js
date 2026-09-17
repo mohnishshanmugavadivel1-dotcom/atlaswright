@@ -1,6 +1,7 @@
 // game.js — orchestrator: state, input, persistence, game loop
 const EXPORT_VERSION = 2;
 // Deployed-build fingerprint — printed on boot so a stale cached page is detectable in 5s.
+// Keep in sync with the build tag in index.html when landing marker-only commits.
 console.info('AtlasWright build 8607ce6+marker (v2.0-patch1, 2026-09-04)');
 
 import { initNoise } from './noise.js';
@@ -13,6 +14,8 @@ import {
   aimInfo, nearestUnrecordedTarget,
 } from './world.js';
 import { initAudio, playBeaconSound, playBearingSound, playPublishSound, toggleAudio, playFootstepSound } from './audio.js';
+// playLockSound exists in audio.js but has no caller yet — wire it into the
+// click-to-play dismiss handler once lock acquisition is confirmed.
 import {
   chart, initChart, drawChart, openChart, closeChart,
   doPlotFix as chartPlotFix, doUndoStroke as chartUndoStroke,
@@ -555,7 +558,8 @@ function updateHud() {
     else phase = 'explore';
   }
 
-  // Status line
+  // Status line — the "not moved yet" gate outranks blocked/aim phases so the
+  // opening instruction is never skipped.
   let status;
   if (state.blocked) {
     status = 'Blocked — ' + state.blockedReason + '.';

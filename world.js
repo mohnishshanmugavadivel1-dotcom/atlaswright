@@ -114,7 +114,7 @@ export const beacons = [];
 export let beaconCount = 0;
 
 export function placeBeacon(px, pz, camAngle) {
-  if (beaconCount >= MB) return { ok: false, reason: 'All ' + MB + ' beacons placed. Open the chart (TAB) and publish.' };
+  if (beaconCount >= MB) return { ok: false, reason: DONE_REASON };
   const wx = px + Math.sin(camAngle) * 10;
   const wz = pz + Math.cos(camAngle) * 10;
   const h = heightAt(wx, wz);
@@ -247,10 +247,10 @@ export function resetWorld() {
 
 export function restoreState(data) {
   beacons.length = 0;
-  data.beacons.forEach(b => beacons.push(b));
+  (data.beacons || []).forEach(b => beacons.push(b));
   beaconCount = data.beaconCount || 0;
   bearings.length = 0;
-  data.bearings.forEach(b => bearings.push(b));
+  (data.bearings || []).forEach(b => bearings.push(b));
   lastFix = data.lastFix || null;
   hasFix = data.hasFix || false;
 }
