@@ -1,5 +1,7 @@
 // game.js — orchestrator: state, input, persistence, game loop
 const EXPORT_VERSION = 2;
+// Deployed-build fingerprint — printed on boot so a stale cached page is detectable in 5s.
+console.info('AtlasWright build 8607ce6+marker (v2.0-patch1, 2026-09-04)');
 
 import { initNoise } from './noise.js';
 import {
